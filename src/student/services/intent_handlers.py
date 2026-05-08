@@ -281,7 +281,7 @@ def handle_quiz_intent(*, student_manager, payload, topic, chat_session_id=None)
         history=history if not session_summary_text else None,
         subject=payload.subject,
         topic=topic,
-        num_questions=5,
+        num_questions=3,
         session_summary=session_summary_text,
     )
 

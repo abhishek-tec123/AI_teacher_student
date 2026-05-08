@@ -2,12 +2,17 @@
 # Quiz Helpers
 # -----------------------------
 quiz_sessions: dict[str, dict] = {}
+completed_quiz_sessions: dict[str, dict] = {}  # Retains last finished quiz per student (TTL 30 min)
 
+import time
+import re
 import logging
 logger = logging.getLogger(__name__)
 
 from student.services.learning_progress import update_progress_and_regression
 from student.repositories.preference_repository import PreferenceManager
+from student.repositories.conversation_repository import ConversationManager
+from student.utils.agent_utils import get_dynamic_agent_id_for_subject
 
 def create_quiz_session(student_id: str, quiz_data: dict, subject: str = "General"):
     quiz_sessions[student_id] = {
@@ -126,6 +131,103 @@ def get_final_quiz_result(student_id: str):
         "total": len(session["quiz"]),
         "answers": session["answers"]
     }
+
+
+# -----------------------------
+# Completed Quiz Retention
+# -----------------------------
+
+def retain_completed_quiz(student_id: str):
+    """Move an active quiz session to completed_quiz_sessions before destroying it."""
+    session = quiz_sessions.get(student_id)
+    if session:
+        completed_quiz_sessions[student_id] = {
+            **session,
+            "completed_at": time.time(),
+        }
+        logger.info(f"Retained completed quiz for {student_id} ({len(session['quiz'])} questions)")
+
+
+def get_last_completed_quiz(student_id: str) -> dict | None:
+    """Get the most recent completed quiz for a student if it's still within TTL (30 min)."""
+    session = completed_quiz_sessions.get(student_id)
+    if not session:
+        return None
+    if time.time() - session.get("completed_at", 0) > 1800:
+        completed_quiz_sessions.pop(student_id, None)
+        return None
+    return session
+
+
+# -----------------------------
+# Post-Quiz Explanation Generator
+# -----------------------------
+
+def generate_quiz_explanation(
+    completed_quiz: dict,
+    question_number: int | None,
+    student_query: str,
+) -> str:
+    """Generate a detailed explanation for a quiz question using the LLM."""
+    quiz_questions = completed_quiz.get("quiz", [])
+    answers = completed_quiz.get("answers", [])
+
+    if not quiz_questions:
+        return "No quiz data available to explain."
+
+    # Determine target question index
+    idx = None
+    q_lower = student_query.lower()
+
+    if question_number == -1 or (question_number is None and re.search(r"\b(last|final)\b", q_lower)):
+        # Explicitly asked about the last question
+        idx = len(quiz_questions) - 1
+    elif question_number is not None:
+        idx = question_number - 1
+        if idx < 0 or idx >= len(quiz_questions):
+            return f"Question {question_number} doesn't exist in your last quiz (total: {len(quiz_questions)})."
+    else:
+        # No specific question referenced — default to the last question since the student is explicitly asking
+        idx = len(quiz_questions) - 1
+
+    target_question = quiz_questions[idx]
+    target_answer = answers[idx] if idx < len(answers) else None
+
+    # Build context for the LLM
+    opts = target_question.get("options", ["", "", "", ""])
+    context = f"""Student's Query: {student_query}
+
+Quiz Question:
+{target_question.get("question", "")}
+
+Options:
+A) {opts[0]}
+B) {opts[1]}
+C) {opts[2]}
+D) {opts[3]}
+
+Correct Answer: {target_question.get("answer", "")}
+Student's Answer: {target_answer.get("selected", "Not answered") if target_answer else "Not answered"}
+Result: {"Correct" if (target_answer and target_answer.get("is_correct")) else "Incorrect"}
+""".strip()
+
+    prompt = """You are a knowledgeable tutor. The student is asking about a specific quiz question.
+
+Your explanation must be detailed and cover ALL of the following:
+1. Why the CORRECT answer is right — explain the concept clearly.
+2. Why each of the OTHER options (the incorrect ones) is wrong — break down the misconception or error in each.
+3. If the student's own answer was incorrect, gently explain what mistake they made and how to avoid it.
+
+Be thorough, educational, and supportive. Do not just say the answer is correct — teach the reasoning behind it."""
+
+    try:
+        from student.services.conversation_summarizer import summarize_text_with_groq
+        explanation = summarize_text_with_groq(text=context, prompt=prompt)
+        return explanation.strip()
+    except Exception as e:
+        logger.error(f"Failed to generate quiz explanation: {e}")
+        return "Sorry, I couldn't generate an explanation right now."
+
 
 from fastapi.responses import JSONResponse
 
@@ -275,7 +377,6 @@ def handle_quiz_mode(student_id: str, query: str, student_manager=None, preferen
                         logger.info(f"Failed to update preferences after quiz: {e}")
                 
                 # Get agent ID for performance tracking
-                from .utils.agent_utils import get_dynamic_agent_id_for_subject
                 agent_id = get_dynamic_agent_id_for_subject(student_manager, student_id, actual_subject)
                 
                 # Calculate quality scores based on quiz performance
@@ -289,6 +390,7 @@ def handle_quiz_mode(student_id: str, query: str, student_manager=None, preferen
                 }
                 
                 # Use ConversationManager for adding conversations
+                conversation_manager = ConversationManager()
                 conversation_manager.add_conversation(
                     student_id=student_id,
                     subject=actual_subject,
@@ -313,7 +415,8 @@ def handle_quiz_mode(student_id: str, query: str, student_manager=None, preferen
             except Exception as e:
                 logger.info(f"Failed to update quiz tracking: {e}")
 
-        # Remove session AFTER computing everything
+        # Retain completed session for post-quiz explanations, then clean up
+        retain_completed_quiz(student_id)
         quiz_sessions.pop(student_id, None)
 
         return JSONResponse(content={

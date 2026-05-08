@@ -1,6 +1,6 @@
 from fastapi.responses import JSONResponse
 from student.services.learning_progress import normalize_student_preference
-from student.services.quiz_helper import create_quiz_session, get_current_question, handle_quiz_mode
+from student.services.quiz_helper import create_quiz_session, get_current_question, handle_quiz_mode, get_last_completed_quiz, generate_quiz_explanation
 from student.services.intent_handlers import handle_chat_intent, handle_study_plan_intent
 from student.agents.main_agent import detect_intent_and_topic
 from student.agents.quiz_generator import generate_quiz_from_history
@@ -256,11 +256,12 @@ def queryRouter(
         else:
             combined_history = []
 
+        num_questions = intent_result.get("num_questions", 3)
         quiz_data = generate_quiz_from_history(
             history=combined_history if not session_summary_text else None,
             subject=payload.subject,
             topic=topic,
-            num_questions=5,
+            num_questions=num_questions,
             session_summary=session_summary_text,
         )
 
@@ -555,6 +556,22 @@ def queryRouter(
         })
 
         context_store[payload.student_id] = session_context[-10:]
+
+    # =============================
+    # QUIZ_EXPLAIN (post-quiz explanation)
+    # =============================
+    elif intent == "QUIZ_EXPLAIN":
+        completed = get_last_completed_quiz(payload.student_id)
+        if not completed:
+            response = "You don't have a recent quiz to explain. Start a quiz first!"
+        else:
+            question_number = intent_result.get("question_number")
+            explanation = generate_quiz_explanation(
+                completed_quiz=completed,
+                question_number=question_number,
+                student_query=payload.query,
+            )
+            response = explanation
 
     return JSONResponse(
         content={

@@ -156,7 +156,7 @@ def generate_quiz_from_history(
     history: list = None,
     subject: str = "",
     topic: str | None = None,
-    num_questions: int = 5,
+    num_questions: int = 3,
     session_summary: str = "",
 ) -> dict:
     """

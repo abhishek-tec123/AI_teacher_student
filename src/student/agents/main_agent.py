@@ -86,12 +86,62 @@ def cache_response(query: str, subject: str, profile: dict, response: str, langu
 # 🎯 INTENT DETECTION
 # =====================================================
 
+# Mapping for word-based numbers (e.g., "ten questions")
+_WORD_NUMBERS = {
+    "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+    "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
+    "eleven": 11, "twelve": 12, "thirteen": 13, "fourteen": 14,
+    "fifteen": 15, "sixteen": 16, "seventeen": 17, "eighteen": 18,
+    "nineteen": 19, "twenty": 20,
+}
+
+
+def _extract_num_questions(q: str) -> int:
+    """Extract requested question count from a quiz query. Defaults to 3, clamps 1-20."""
+    # Numeric patterns: "10 questions", "5 q", "generate 12"
+    num_match = re.search(r"(\d+)\s*(?:question|questions|q|mcq|mcqs|problem|problems)", q)
+    if num_match:
+        return max(1, min(int(num_match.group(1)), 20))
+
+    # Word-based numbers: "ten questions"
+    for word, value in _WORD_NUMBERS.items():
+        if re.search(rf"\b{word}\b\s*(?:question|questions|q|mcq|mcqs|problem|problems)", q):
+            return max(1, min(value, 20))
+
+    return 3  # default when student doesn't specify
+
+
 def detect_intent_and_topic(query: str, current_subject: str = None) -> dict:
     q = query.lower()
 
     if any(x in q for x in ["quiz", "test me", "start quiz"]):
         match = re.search(r"(?:on|from|of)\s+(.*)", q)
-        return {"intent": "QUIZ", "topic": match.group(1) if match else None}
+        return {
+            "intent": "QUIZ",
+            "topic": match.group(1) if match else None,
+            "num_questions": _extract_num_questions(q),
+        }
+
+    # Post-quiz explanation intent — requires quiz-related context words
+    quiz_context_words = ["question", "q", "answer", "quiz", "test"]
+    has_quiz_context = any(w in q for w in quiz_context_words)
+    has_explain_words = any(w in q for w in ["why", "explain", "wrong", "mistake", "correct"])
+    if has_quiz_context and has_explain_words:
+        # Check for "last question" / "final question" before digit regex
+        if re.search(r"\b(last|final)\b.*\b(question|q)\b|\b(question|q)\b.*\b(last|final)\b", q):
+            return {
+                "intent": "QUIZ_EXPLAIN",
+                "question_number": -1,  # sentinel for "last question"
+            }
+
+        q_num_match = re.search(r"(?:question|q)\s*(\d+)|#(\d+)", q)
+        question_number = None
+        if q_num_match:
+            question_number = int(q_num_match.group(1) or q_num_match.group(2))
+        return {
+            "intent": "QUIZ_EXPLAIN",
+            "question_number": question_number,
+        }
 
     if any(x in q for x in ["study plan", "how to learn", "start learning"]):
         match = re.search(r"(?:learn|study)\s+(.*)", q)
