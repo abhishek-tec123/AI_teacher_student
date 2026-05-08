@@ -45,8 +45,8 @@ class Settings(BaseSettings):
     gemini_api_key: Optional[str] = None
     groq_api_key: Optional[str] = None
     tavily_api_key: Optional[str] = None
-    gemini_llm: str = "gemini-2.5-flash-lite"
-    groq_llm: str = "meta-llama/llama-4-scout-17b-16e-instruct"
+    gemini_llm: str
+    groq_llm: str
 
     # Embeddings / Models
     embed_model_name: str = "sentence-transformers/all-MiniLM-L6-v2"
@@ -59,6 +59,13 @@ class Settings(BaseSettings):
     rate_limit_teacher_requests: int = 120
     rate_limit_default_requests: int = 300
     rate_limit_window: int = 60
+
+    # Groq LLM Rate Limits
+    groq_tpm_limit: int = 29000  # Tokens per minute limit (slightly below 8000 to have headroom)
+    groq_tpm_reserve: int = 500  # Reserve tokens for critical calls
+    groq_max_concurrent: int = 2  # Max concurrent Groq API calls
+    groq_retry_max_attempts: int = 3  # Max retries on 429 rate limit
+    groq_retry_base_delay: float = 2.0  # Base delay in seconds for exponential backoff
 
     def model_post_init(self, __context):
         if not self.jwt_secret_key:
@@ -67,28 +74,6 @@ class Settings(BaseSettings):
                 object.__setattr__(self, "jwt_secret_key", self.aes_key)
             else:
                 raise ValueError("JWT_SECRET_KEY is required. Set it in your .env file.")
-
-    # CORS
-    cors_origins: str = "https://tecorb.in"
-
-    # LLM / APIs
-    gemini_api_key: Optional[str] = None
-    groq_api_key: Optional[str] = None
-    tavily_api_key: Optional[str] = None
-    gemini_llm: str = "gemini-2.5-flash-lite"
-    groq_llm: str = "meta-llama/llama-4-scout-17b-16e-instruct"
-
-    # Embeddings / Models
-    embed_model_name: str = "sentence-transformers/all-MiniLM-L6-v2"
-
-    # TTS
-    tts_default_voice: str = "en-US-AriaNeural"
-
-    # Rate Limits
-    rate_limit_admin_requests: int = 120
-    rate_limit_teacher_requests: int = 120
-    rate_limit_default_requests: int = 300
-    rate_limit_window: int = 60
 
     @property
     def cors_origins_list(self) -> List[str]:

@@ -222,27 +222,10 @@ def diagnosis_chat(
     Args:
         language: Response language ('english', 'hindi', 'hinglish' or None for auto-detect)
     """
-    from common.utils.language_detector import detect_language
-    
-    # -----------------------------
-    # 🌐 LANGUAGE DETECTION
-    # -----------------------------
-    if language is None or language == "auto":
-        # Get preferred language from profile
-        preferred_language = student_profile.get("preferred_language", "auto")
-        
-        if preferred_language == "auto":
-            # Auto-detect from query
-            detected_language = detect_language(query, use_llm_fallback=True)
-            logger.info(f"🌐 Auto-detected language: {detected_language}")
-        else:
-            # Use student's preferred language
-            detected_language = preferred_language
-            logger.info(f"🌐 Using preferred language: {detected_language}")
-    else:
-        detected_language = language
-        logger.info(f"🌐 Using explicit language: {detected_language}")
-    
+    # Use provided language or default to english
+    detected_language = language or "english"
+    logger.info(f"🌐 Using language: {detected_language}")
+
     # Store detected language in profile for continuity
     student_profile["last_detected_language"] = detected_language
 

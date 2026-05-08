@@ -76,12 +76,13 @@ def call_llm_direct(prompt: str, content: str = "") -> str:
         else:
             full_input = prompt
 
-        llm = ChatGroq(
-            model_name="meta-llama/llama-4-scout-17b-16e-instruct",
-            api_key=groq_api_key
+        from common.llm.groq_client import sync_invoke_with_limiters
+        response = sync_invoke_with_limiters(
+            messages=[HumanMessage(content=full_input)],
+            model_name=settings.groq_llm,
+            api_key=groq_api_key,
+            retry_on_429=True,
         )
-
-        response = llm.invoke([HumanMessage(content=full_input)])
 
         result = getattr(response, "content", str(response)).strip()
 

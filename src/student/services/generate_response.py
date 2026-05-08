@@ -80,14 +80,16 @@ QUESTION:
 {query}
 """.strip()
 
-            llm = ChatGroq(
-                model_name="meta-llama/llama-4-scout-17b-16e-instruct",
+            from common.llm.groq_client import sync_invoke_with_limiters
+
+            response = sync_invoke_with_limiters(
+                messages=[HumanMessage(content=full_input)],
+                model_name=settings.groq_llm,
                 api_key=groq_api_key,
                 timeout=30.0,
-                max_retries=2
+                max_retries=2,
+                retry_on_429=True,
             )
-
-            response = llm.invoke([HumanMessage(content=full_input)])
             result = getattr(response, "content", str(response)).strip()
             
             # Cache the response
@@ -143,19 +145,21 @@ QUESTION:
 {query}
 """.strip()
 
-            llm = ChatGroq(
-                model_name="meta-llama/llama-4-scout-17b-16e-instruct",
+            from common.llm.groq_client import sync_invoke_with_limiters
+
+            # Note: streaming via centralized client uses invoke for simplicity
+            # If true streaming is needed, use ChatGroq directly with caution
+            response = sync_invoke_with_limiters(
+                messages=[HumanMessage(content=full_input)],
+                model_name=settings.groq_llm,
                 api_key=groq_api_key,
                 timeout=30.0,
                 max_retries=2,
-                streaming=True
+                retry_on_429=True,
             )
-
-            # Stream response
-            for chunk in llm.stream([HumanMessage(content=full_input)]):
-                content = getattr(chunk, 'content', '')
-                if content:
-                    yield content
+            content = getattr(response, 'content', '')
+            if content:
+                yield content
                     
         except Exception as e:
             logger.error(f"Error in LLM streaming: {e}")
@@ -230,12 +234,14 @@ QUESTION:
 {query}
 """.strip()
 
-        llm = ChatGroq(
-            model_name="meta-llama/llama-4-scout-17b-16e-instruct",
-            api_key=groq_api_key
-        )
+        from common.llm.groq_client import sync_invoke_with_limiters
 
-        response = llm.invoke([HumanMessage(content=full_input)])
+        response = sync_invoke_with_limiters(
+            messages=[HumanMessage(content=full_input)],
+            model_name=settings.groq_llm,
+            api_key=groq_api_key,
+            retry_on_429=True,
+        )
 
         result = getattr(response, "content", str(response)).strip()
 

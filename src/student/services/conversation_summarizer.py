@@ -31,12 +31,14 @@ TEXT:
 {text}
 """.strip()
 
-    llm = ChatGroq(
-        model_name="meta-llama/llama-4-scout-17b-16e-instruct",
-        api_key=groq_api_key
-    )
+    from common.llm.groq_client import sync_invoke_with_limiters
 
-    response = llm.invoke([HumanMessage(content=full_input)])
+    response = sync_invoke_with_limiters(
+        messages=[HumanMessage(content=full_input)],
+        model_name=settings.groq_llm,
+        api_key=groq_api_key,
+        retry_on_429=True,
+    )
 
     summary = getattr(response, "content", str(response)).strip()
 
@@ -81,40 +83,63 @@ logger = logging.getLogger(__name__)
 
 
 
-def update_running_summary(
+def update_session_summary(
     *,
-    student_id: str,
-    subject: str,
-    new_entry: dict,
+    chat_session_id: str,
+    query: str,
+    response: str,
     student_manager,
-    conversation_manager  # Add conversation_manager parameter
+    student_id: str = "",
 ) -> str:
     """
-    Updates running summary in MongoDB under:
-    conversation_summary.{subject}
+    Updates a detailed session summary in MongoDB under session_summaries array.
+    This detailed summary is used by notes and quiz agents.
     """
+    if not chat_session_id:
+        logger.warning("No chat_session_id provided, skipping session summary update")
+        return ""
 
     # -----------------------------
-    # 1️⃣ Get Previous Summary from Mongo
+    # 1️⃣ Resolve student_id if not provided directly
+    # -----------------------------
+    if not student_id:
+        # Try to find student by chat_session_id in chat_sessions metadata
+        doc = student_manager.students.find_one(
+            {f"chat_sessions.active_chat_sessions.chat_session_id": chat_session_id},
+            {"student_id": 1}
+        )
+        if not doc:
+            # Fallback: search in session_summaries array
+            doc = student_manager.students.find_one(
+                {"session_summaries.chat_session_id": chat_session_id},
+                {"student_id": 1}
+            )
+        if doc:
+            student_id = doc.get("student_id")
+
+    if not student_id:
+        logger.warning(f"No student found for chat_session_id {chat_session_id}")
+        return ""
+
+    # -----------------------------
+    # 2️⃣ Get Previous Session Summary
     # -----------------------------
     student_doc = student_manager.students.find_one(
         {"student_id": student_id},
-        {"conversation_summary": 1}
+        {"session_summaries": 1}
     )
 
     previous_summary = ""
-
     if student_doc:
-        previous_summary = (
-            student_doc.get("conversation_summary", {})
-            .get(subject, "")
-        )
+        summaries = student_doc.get("session_summaries", [])
+        for s in summaries:
+            if s.get("chat_session_id") == chat_session_id:
+                previous_summary = s.get("summary", "")
+                break
 
     # -----------------------------
-    # 2️⃣ Prepare New Conversation Text
+    # 2️⃣ Prepare Updated Text
     # -----------------------------
-    response = new_entry.get("response", "")
-
     if isinstance(response, dict):
         response_text = json.dumps(response)
     elif not isinstance(response, str):
@@ -123,39 +148,97 @@ def update_running_summary(
         response_text = response
 
     combined_text = f"""
-PREVIOUS SUMMARY:
+PREVIOUS SESSION SUMMARY:
 {previous_summary}
 
-NEW CONVERSATION ENTRY:
-User: {new_entry.get("query", "")}
-Assistant: {response_text}
+NEW CONVERSATION:
+Student: {query}
+Teacher: {response_text}
 """.strip()
 
     # -----------------------------
-    # 3️⃣ Generate Updated Summary
+    # 3️⃣ Generate Detailed Session Summary
     # -----------------------------
     try:
+        prompt = """You are creating a detailed learning session summary for a student.
+This summary must be comprehensive enough to generate study notes and quiz questions from it later.
+
+RULES:
+- Preserve ALL key concepts, definitions, and explanations discussed
+- Include specific examples mentioned
+- Note any formulas or equations discussed (use Unicode subscripts/superscripts)
+- Track the student's confusion points and how they were resolved
+- Maintain chronological order of topics covered
+- Write in paragraph form (no bullet points, no markdown, no emojis)
+- Be thorough and detailed — this is the ONLY record of the session
+- Include enough detail that a notes-generating agent can create comprehensive study material from this alone
+
+Update the previous summary with the new conversation, integrating it naturally."""
+
         updated_summary = summarize_text_with_groq(
             text=combined_text,
-            prompt="Update this running student learning summary concisely. Preserve important concepts and progress."
+            prompt=prompt
         )
 
         # -----------------------------
-        # 4️⃣ Save to MongoDB
+        # 4️⃣ Save to MongoDB (upsert into session_summaries array)
         # -----------------------------
+        # Remove old entry if exists
         student_manager.students.update_one(
             {"student_id": student_id},
             {
-                "$set": {
-                    f"conversation_summary.{subject}": updated_summary
+                "$pull": {
+                    "session_summaries": {"chat_session_id": chat_session_id}
                 }
             }
         )
 
-        logger.info("Conversation summary updated in MongoDB")
+        # Add updated entry
+        student_manager.students.update_one(
+            {"student_id": student_id},
+            {
+                "$push": {
+                    "session_summaries": {
+                        "chat_session_id": chat_session_id,
+                        "summary": updated_summary,
+                        "updated_at": __import__('datetime').datetime.utcnow()
+                    }
+                }
+            }
+        )
 
+        logger.info(f"Session summary updated for chat_session {chat_session_id}")
         return updated_summary
 
     except Exception as e:
-        logger.error(f"Summary update failed: {e}")
+        logger.error(f"Session summary update failed: {e}")
         return previous_summary
+
+
+def get_session_summary(
+    *,
+    chat_session_id: str,
+    student_manager,
+    student_id: str = "",
+) -> str:
+    """
+    Retrieves the detailed session summary for a given chat session.
+    Returns empty string if not found.
+    """
+    if not chat_session_id:
+        return ""
+
+    try:
+        query = {"student_id": student_id} if student_id else {"session_summaries.chat_session_id": chat_session_id}
+        projection = {"session_summaries": 1} if student_id else {"session_summaries.$": 1}
+        student_doc = student_manager.students.find_one(query, projection)
+
+        if student_doc:
+            summaries = student_doc.get("session_summaries", [])
+            for s in summaries:
+                if s.get("chat_session_id") == chat_session_id:
+                    return s.get("summary", "")
+    except Exception as e:
+        logger.error(f"Failed to get session summary: {e}")
+
+    return ""

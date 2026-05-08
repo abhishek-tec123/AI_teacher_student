@@ -9,15 +9,23 @@ logger = logging.getLogger(__name__)
 # -------------------------------------------------
 # JSON Extraction (robust against bad LLM output)
 # -------------------------------------------------
+def _strip_markdown_code_blocks(text: str) -> str:
+    """Remove markdown code fences (```json ... ```)."""
+    text = re.sub(r"```json\s*", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"```\s*", "", text)
+    return text.strip()
+
+
 def extract_json_from_text(text: str) -> dict:
     """
     Extracts the first valid JSON object or array from LLM output.
     Always returns a dict with a 'quiz' key.
     """
+    cleaned = _strip_markdown_code_blocks(text)
 
     # 1️⃣ Direct JSON parse
     try:
-        parsed = json.loads(text)
+        parsed = json.loads(cleaned)
         if isinstance(parsed, dict) and "quiz" in parsed:
             return parsed
         if isinstance(parsed, list):
@@ -25,8 +33,8 @@ def extract_json_from_text(text: str) -> dict:
     except json.JSONDecodeError:
         pass
 
-    # 2️⃣ Try extracting JSON array
-    array_match = re.search(r"\[\s*{.*?}\s*\]", text, re.DOTALL)
+    # 2️⃣ Try extracting JSON array (non-greedy, then progressively smaller)
+    array_match = re.search(r"\[\s*\{.*?\}\s*\]", cleaned, re.DOTALL)
     if array_match:
         try:
             parsed = json.loads(array_match.group())
@@ -35,22 +43,67 @@ def extract_json_from_text(text: str) -> dict:
         except json.JSONDecodeError:
             pass
 
-    # 3️⃣ Try extracting JSON object
-    object_match = re.search(r"\{.*\}", text, re.DOTALL)
-    if object_match:
-        try:
-            parsed = json.loads(object_match.group())
-            if isinstance(parsed, dict):
-                return parsed
-        except json.JSONDecodeError:
-            pass
+    # 3️⃣ Try extracting JSON object with balanced braces
+    # Start from the first '{' and try to find a valid JSON by counting braces
+    start = cleaned.find("{")
+    while start != -1:
+        depth = 0
+        for i, ch in enumerate(cleaned[start:], start=start):
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    candidate = cleaned[start:i + 1]
+                    try:
+                        parsed = json.loads(candidate)
+                        if isinstance(parsed, dict):
+                            return parsed
+                    except json.JSONDecodeError:
+                        pass
+                    break
+        start = cleaned.find("{", start + 1)
 
-    logger.info("⚠️ WARNING: Failed to extract JSON from LLM output")
+    logger.warning("Failed to extract JSON from LLM output. Raw text (first 500 chars): %s", cleaned[:500])
     return {"quiz": []}
 
 # -------------------------------------------------
 # Validation & Cleanup
 # -------------------------------------------------
+def _resolve_answer(answer_raw: Any, options: List[str]) -> str | None:
+    """
+    Resolve an answer value to an actual option string.
+    Supports:
+      - exact string match (case-insensitive)
+      - single-letter A-D / a-d (mapped to options[0-3])
+      - integer index 0-3
+    """
+    if not options:
+        return None
+
+    # 1️⃣ Exact string match (case-insensitive)
+    answer_str = str(answer_raw).strip()
+    for opt in options:
+        if opt.strip().lower() == answer_str.lower():
+            return opt.strip()
+
+    # 2️⃣ Letter match A-D / a-d
+    if len(answer_str) == 1 and answer_str.upper() in "ABCD":
+        idx = ord(answer_str.upper()) - ord("A")
+        if 0 <= idx < len(options):
+            return options[idx].strip()
+
+    # 3️⃣ Integer index 0-3
+    try:
+        idx = int(answer_raw)
+        if 0 <= idx < len(options):
+            return options[idx].strip()
+    except (ValueError, TypeError):
+        pass
+
+    return None
+
+
 def normalize_quiz_items(
     quiz: List[Dict[str, Any]],
     expected_count: int
@@ -66,21 +119,29 @@ def normalize_quiz_items(
 
     for q in quiz:
         if not isinstance(q, dict):
+            logger.debug("Quiz item rejected: not a dict (%s)", type(q))
             continue
 
         if not all(k in q for k in ["question", "options", "answer"]):
+            logger.debug("Quiz item rejected: missing required keys (%s)", list(q.keys()))
             continue
 
         if not isinstance(q["options"], list) or len(q["options"]) != 4:
+            logger.debug("Quiz item rejected: options not a list of length 4 (%s)", q.get("options"))
             continue
 
-        if q["answer"] not in q["options"]:
+        resolved_answer = _resolve_answer(q["answer"], q["options"])
+        if resolved_answer is None:
+            logger.debug(
+                "Quiz item rejected: answer '%s' not found in options %s",
+                q["answer"], q["options"]
+            )
             continue
 
         valid_questions.append({
             "question": q["question"].strip(),
             "options": [opt.strip() for opt in q["options"]],
-            "answer": q["answer"].strip()
+            "answer": resolved_answer
         })
 
         if len(valid_questions) == expected_count:
@@ -92,10 +153,11 @@ def normalize_quiz_items(
 # Main Quiz Generator
 # -------------------------------------------------
 def generate_quiz_from_history(
-    history: list,
-    subject: str,
+    history: list = None,
+    subject: str = "",
     topic: str | None = None,
-    num_questions: int = 5
+    num_questions: int = 5,
+    session_summary: str = "",
 ) -> dict:
     """
     Generates a multiple-choice quiz ONCE.
@@ -115,8 +177,8 @@ def generate_quiz_from_history(
     }
     """
 
-    # Safety fallback
-    if not history and not topic:
+    # Safety fallback: only bail if we have absolutely no content to work with
+    if not history and not topic and not session_summary:
         return {
             "subject": subject,
             "topic": topic,
@@ -124,23 +186,28 @@ def generate_quiz_from_history(
             "current_question": None
         }
 
-    conversation_text = extract_text_from_history(history) if history else ""
+    # Use session summary if available, otherwise extract from raw history
+    if session_summary:
+        conversation_text = session_summary
+        logger.info(f"📝 Using session summary for quiz generation ({len(session_summary)} chars)")
+    else:
+        conversation_text = extract_text_from_history(history) if history else ""
 
-    # Filter history to focus on topic-relevant conversations if topic is specified
-    if topic and history:
-        topic_keywords = topic.lower().split()
-        topic_relevant_history = []
-        
-        for item in history:
-            item_text = f"{item.get('query', '')} {item.get('response', '')}".lower()
-            # Check if any topic keywords appear in the conversation
-            if any(keyword in item_text for keyword in topic_keywords if len(keyword) > 2):
-                topic_relevant_history.append(item)
-        
-        # If we found topic-relevant history, use it; otherwise use all history
-        if topic_relevant_history:
-            conversation_text = extract_text_from_history(topic_relevant_history)
-            logger.info(f"🎯 Using {len(topic_relevant_history)} topic-relevant conversations out of {len(history)} total")
+        # Filter history to focus on topic-relevant conversations if topic is specified
+        if topic and history:
+            topic_keywords = topic.lower().split()
+            topic_relevant_history = []
+
+            for item in history:
+                item_text = f"{item.get('query', '')} {item.get('response', '')}".lower()
+                # Check if any topic keywords appear in the conversation
+                if any(keyword in item_text for keyword in topic_keywords if len(keyword) > 2):
+                    topic_relevant_history.append(item)
+
+            # If we found topic-relevant history, use it; otherwise use all history
+            if topic_relevant_history:
+                conversation_text = extract_text_from_history(topic_relevant_history)
+                logger.info(f"🎯 Using {len(topic_relevant_history)} topic-relevant conversations out of {len(history)} total")
 
     topic_instruction = (
         f"The quiz MUST be strictly about this topic: {topic}.\n"
@@ -187,8 +254,10 @@ JSON FORMAT (ONLY THIS):
 }}
 """
 
+    # The prompt already contains conversation_text; pass a short instruction
+    # to avoid duplicating the full context inside summarize_text_with_groq.
     raw_output = summarize_text_with_groq(
-        text=conversation_text if conversation_text else topic,
+        text="Generate the quiz JSON now.",
         prompt=prompt
     )
 
@@ -199,15 +268,15 @@ JSON FORMAT (ONLY THIS):
 
     # Hard safety check
     if len(quiz_clean) != num_questions:
-        print(
-            f"⚠️ WARNING: Expected {num_questions} questions, "
-            f"got {len(quiz_clean)}"
+        logger.warning(
+            "Expected %d questions, got %d",
+            num_questions, len(quiz_clean)
         )
-        
+
         # If we got no questions, try a simpler approach with better prompt
         if len(quiz_clean) == 0:
-            logger.info(f"🔄 Retrying with simplified quiz generation...")
-            
+            logger.info("Retrying with simplified quiz generation...")
+
             # Create a simpler, more direct prompt
             simple_prompt = f"""
 Generate exactly {num_questions} multiple-choice questions about {topic or subject}.
@@ -230,10 +299,10 @@ Requirements:
 - Answer must match one option
 - Based on the learning context above
 """
-            
-            # Retry with simpler prompt
+
+            # Retry with simpler prompt (avoid duplicating context again)
             retry_output = summarize_text_with_groq(
-                text=conversation_text[:500] if conversation_text else topic,
+                text="Generate the quiz JSON now.",
                 prompt=simple_prompt
             )
             

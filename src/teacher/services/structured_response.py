@@ -98,18 +98,20 @@ def generate_response_from_groq(
     if not groq_api_key:
         raise ValueError("GROQ_API_KEY is not set in environment variables.")
 
-    llm = ChatGroq(
-        model_name="meta-llama/llama-4-scout-17b-16e-instruct",
-        api_key=groq_api_key,
-        temperature=0.3
-    )
+    from common.llm.groq_client import sync_invoke_with_limiters
 
     messages = [HumanMessage(content=full_input)]
-    
+
     input_tokens = count_tokens(full_input)
     logger.info(f"[Token Log] Input tokens: {input_tokens}")
-    
-    response = llm.invoke(messages)
+
+    response = sync_invoke_with_limiters(
+        messages=messages,
+        model_name=settings.groq_llm,
+        api_key=groq_api_key,
+        temperature=0.3,
+        retry_on_429=True,
+    )
 
     response_text = getattr(response, "content", str(response))
     output_tokens = count_tokens(response_text)
@@ -200,11 +202,13 @@ Return ONLY this JSON (no other text):
 {{"model_certainty": N, "answer_completeness": N, "hallucination_risk": N}}"""
 
         try:
-            llm = ChatGroq(
-                model_name="meta-llama/llama-4-scout-17b-16e-instruct",
-                api_key=groq_api_key
+            from common.llm.groq_client import sync_invoke_with_limiters
+            out = sync_invoke_with_limiters(
+                messages=[HumanMessage(content=prompt)],
+                model_name=settings.groq_llm,
+                api_key=groq_api_key,
+                retry_on_429=True,
             )
-            out = llm.invoke([HumanMessage(content=prompt)])
             raw = getattr(out, "content", str(out))
             # Parse JSON from response
             match = re.search(r"\{[\s\S]*?\}", raw)

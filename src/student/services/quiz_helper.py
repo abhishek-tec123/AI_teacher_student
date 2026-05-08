@@ -3,15 +3,11 @@
 # -----------------------------
 quiz_sessions: dict[str, dict] = {}
 
-# Import for quiz completion summarization
-try:
-    from student.services.conversation_summarizer import update_running_summary
-    from student.services.learning_progress import update_progress_and_regression
-    from student.repositories.preference_repository import PreferenceManager
-except ImportError:
-    logger.info("Warning: Quiz summarization not available - missing dependencies")
-    update_running_summary = None
-    update_progress_and_regression = None
+import logging
+logger = logging.getLogger(__name__)
+
+from student.services.learning_progress import update_progress_and_regression
+from student.repositories.preference_repository import PreferenceManager
 
 def create_quiz_session(student_id: str, quiz_data: dict, subject: str = "General"):
     quiz_sessions[student_id] = {
@@ -132,8 +128,6 @@ def get_final_quiz_result(student_id: str):
     }
 
 from fastapi.responses import JSONResponse
-import logging
-logger = logging.getLogger(__name__)
 
 def handle_quiz_mode(student_id: str, query: str, student_manager=None, preference_manager=None):
     """

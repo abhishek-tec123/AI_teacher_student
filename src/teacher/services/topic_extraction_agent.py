@@ -75,10 +75,10 @@ class TopicExtractionAgent:
             if not groq_api_key:
                 raise ValueError("GROQ_API_KEY not set")
                 
-            self._llm = ChatGroq(
-                model_name="meta-llama/llama-4-scout-17b-16e-instruct",
-                api_key=groq_api_key
-            )
+            from common.llm.groq_client import sync_invoke_with_limiters
+            self._llm = None  # We use centralized client; keep property for compatibility
+            self._llm_model_name = settings.groq_llm
+            self._llm_api_key = groq_api_key
         return self._llm
 
     # -----------------------------
@@ -249,7 +249,13 @@ class TopicExtractionAgent:
             else:
                 full_input = prompt
 
-            response = self.llm.invoke([HumanMessage(content=full_input)])
+            from common.llm.groq_client import sync_invoke_with_limiters
+            response = sync_invoke_with_limiters(
+                messages=[HumanMessage(content=full_input)],
+                model_name=self._llm_model_name,
+                api_key=self._llm_api_key,
+                retry_on_429=True,
+            )
             response_text = getattr(response, "content", str(response)).strip()
 
             if not response_text:

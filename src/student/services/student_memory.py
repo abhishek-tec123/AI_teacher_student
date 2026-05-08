@@ -84,12 +84,13 @@ USER MESSAGE:
 {query}
 """
 
-    llm = ChatGroq(
-        model_name="meta-llama/llama-4-scout-17b-16e-instruct",
-        api_key=groq_api_key
+    from common.llm.groq_client import sync_invoke_with_limiters
+    response = sync_invoke_with_limiters(
+        messages=[HumanMessage(content=memory_detection_prompt)],
+        model_name=settings.groq_llm,
+        api_key=groq_api_key,
+        retry_on_429=True,
     )
-
-    response = llm.invoke([HumanMessage(content=memory_detection_prompt)])
     raw_output = getattr(response, "content", str(response)).strip()
 
     # Clean markdown if present

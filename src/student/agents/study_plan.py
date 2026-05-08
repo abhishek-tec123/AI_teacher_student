@@ -37,7 +37,8 @@ Examples:
 def generate_study_plan_with_subtopics(
     student_sentence: str,
     student_profile: dict | None = None,
-    explicit_topic: str | None = None
+    explicit_topic: str | None = None,
+    session_summary: str = "",
 ) -> str:
     """
     Generates a structured beginner-friendly study plan
@@ -45,7 +46,13 @@ def generate_study_plan_with_subtopics(
     """
 
     # 🔑 Decide topic source
-    topic = explicit_topic.strip() if explicit_topic else extract_topic_from_sentence(student_sentence)
+    if explicit_topic:
+        topic = explicit_topic.strip()
+    elif session_summary:
+        # Extract topic from session summary if available
+        topic = extract_topic_from_sentence(session_summary[:500])
+    else:
+        topic = extract_topic_from_sentence(student_sentence)
 
     # 🧠 Student profile hint
     profile_hint = ""
@@ -54,12 +61,27 @@ def generate_study_plan_with_subtopics(
         for k, v in student_profile.items():
             profile_hint += f"- {k}: {v}\n"
 
+    # Add session summary context if available
+    session_context = ""
+    if session_summary:
+        session_context = f"""
+STUDENT SESSION CONTEXT (what the student has already discussed and learned):
+{session_summary}
+
+Use this context to:
+- Avoid repeating topics already covered
+- Build upon concepts the student already knows
+- Address any confusion points mentioned in the session
+"""
+
     prompt = f"""
 You are an experienced and student-friendly teacher.
 
 Create a structured step-by-step study plan for:
 
 TOPIC: {topic}
+
+{session_context}
 
 IMPORTANT RULES:
 - Assume the student is a complete beginner

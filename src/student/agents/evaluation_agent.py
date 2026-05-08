@@ -24,6 +24,22 @@ def _get_evaluator_llm():
     return _evaluator_llm
 
 
+def _evaluate_with_limiter(messages):
+    """Evaluate using centralized rate limiter when possible, fallback to direct LLM."""
+    try:
+        from common.llm.groq_client import sync_invoke_with_limiters
+        return sync_invoke_with_limiters(
+            messages=messages,
+            model_name="llama-3.1-8b-instant",
+            temperature=0.1,
+            max_tokens=400,
+            retry_on_429=True,
+        )
+    except Exception:
+        # Fallback to direct LLM if centralized client fails
+        return _get_evaluator_llm().invoke(messages)
+
+
 EVALUATION_PROMPT = """
 You are a STRICT educational response evaluator.
 
@@ -161,7 +177,7 @@ def evaluate_response(
     }
 
     try:
-        result = _get_evaluator_llm().invoke([message])
+        result = _evaluate_with_limiter([message])
         raw_output = result.content.strip()
         scores = json.loads(raw_output)
 

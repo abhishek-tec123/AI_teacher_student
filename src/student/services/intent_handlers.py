@@ -29,19 +29,10 @@ def handle_chat_intent(
     preference_manager,  # Add preference_manager parameter
     chat_session_id=None,  # Add chat_session_id parameter
 ):
-    # Import language detector
-    from common.utils.language_detector import detect_language
-    
-    # Detect language from query or use explicit preference
-    explicit_language = getattr(payload, 'language', None)
-    if explicit_language and explicit_language != "auto":
-        detected_language = explicit_language
-        logger.info(f"🌐 Using explicit language from request: {detected_language}")
-    else:
-        # Auto-detect from query
-        detected_language = detect_language(payload.query, use_llm_fallback=True)
-        logger.info(f"🌐 Auto-detected language in handle_chat_intent: {detected_language}")
-    
+    # Use explicit language from request, default to english
+    detected_language = getattr(payload, 'language', None) or "english"
+    logger.info(f"🌐 Using language: {detected_language}")
+
     # Store in profile for continuity
     profile["last_detected_language"] = detected_language
     # -----------------------------------------
@@ -120,19 +111,11 @@ def handle_chat_intent(
     # IMMEDIATE RESPONSE PRIORITY: Return LLM response first
     # -----------------------------------------
     
-    # Return immediate response with original profile (faster!)
-    try:
-        context_summary = conversation_manager.get_subject_summary(payload.student_id, payload.subject)
-    except Exception as e:
-        logger.info(f"⚠️ Failed to fetch existing summary in handle_chat_intent: {e}")
-        context_summary = None
-    
     immediate_result = {
         "response": response,
         "profile": profile,  # Return original profile for speed
         "evaluation": {"status": "processing"},  # Placeholder evaluation
         "conversation_id": conversation_id,  # Now has actual ID
-        "context_summary": context_summary,  # Add context summary to response
         "detected_language": detected_language,  # Include detected language
     }
 
@@ -207,21 +190,19 @@ def handle_chat_intent(
                 logger.info(f"   - Student ID: {payload.student_id}")
                 logger.info(f"   - Performance Update Result: {performance_update_result}")
             
-            # Update conversation summary in background
-            from student.services.conversation_summarizer import update_running_summary
-            new_entry = {
-                "query": payload.query,
-                "response": response,
-                "evolution": evaluation
-            }
-            update_running_summary(
-                student_id=payload.student_id,
-                subject=payload.subject,
-                new_entry=new_entry,
-                student_manager=student_manager,
-                conversation_manager=conversation_manager  # Add missing parameter
-            )
-            logger.info("📝 Background summary update completed")
+            # Update session summary in background
+            if chat_session_id:
+                from student.services.conversation_summarizer import update_session_summary
+                update_session_summary(
+                    chat_session_id=chat_session_id,
+                    query=payload.query,
+                    response=response,
+                    student_manager=student_manager,
+                    student_id=payload.student_id,
+                )
+                logger.info("📝 Background session summary update completed")
+            else:
+                logger.info("⚠️ Skipping session summary update - no chat_session_id")
             
             # Update student profile with new preferences (moved to background)
             try:
@@ -237,7 +218,6 @@ def handle_chat_intent(
                         "tone": updated_profile["tone"],
                         "response_length": updated_profile["response_length"],
                         "include_example": updated_profile["include_example"],
-                        "last_detected_language": detected_language,  # Store detected language
                     },
                 )
                 logger.info("💾 Background profile persistence completed")
@@ -273,31 +253,60 @@ def handle_chat_intent(
 # Quiz Intent
 # -------------------------------------------------
 
-def handle_quiz_intent(*, student_manager, payload, topic):
-    # Use ConversationManager for conversation history
-    conversation_manager = ConversationManager()
-    history = conversation_manager.get_conversation_history(
-        payload.student_id,
-        payload.subject,
-        limit=20,
-    )
+def handle_quiz_intent(*, student_manager, payload, topic, chat_session_id=None):
+    # Try to use session summary first (more efficient)
+    session_summary_text = ""
+    if chat_session_id:
+        from student.services.conversation_summarizer import get_session_summary
+        session_summary_text = get_session_summary(
+            chat_session_id=chat_session_id,
+            student_manager=student_manager,
+            student_id=payload.student_id,
+        )
+        if session_summary_text:
+            logger.info(f"📝 Using session summary for quiz generation")
+
+    # Fallback to raw history if no session summary
+    if not session_summary_text:
+        conversation_manager = ConversationManager()
+        history = conversation_manager.get_conversation_history(
+            payload.student_id,
+            payload.subject,
+            limit=20,
+        )
+    else:
+        history = []
 
     return generate_quiz_from_history(
-        history=history,
+        history=history if not session_summary_text else None,
         subject=payload.subject,
         topic=topic,
         num_questions=5,
+        session_summary=session_summary_text,
     )
 
 # -------------------------------------------------
 # Study Plan Intent
 # -------------------------------------------------
 
-def handle_study_plan_intent(*, payload, profile, topic):
+def handle_study_plan_intent(*, student_manager, payload, profile, topic, chat_session_id=None):
+    # Try to use session summary for study plan context
+    session_summary_text = ""
+    if chat_session_id:
+        from student.services.conversation_summarizer import get_session_summary
+        session_summary_text = get_session_summary(
+            chat_session_id=chat_session_id,
+            student_manager=student_manager,
+            student_id=payload.student_id,
+        )
+        if session_summary_text:
+            logger.info(f"📝 Using session summary for study plan generation")
+
     plan_text = generate_study_plan_with_subtopics(
         student_sentence=payload.query,
         student_profile=profile,
         explicit_topic=topic,
+        session_summary=session_summary_text,
     )
 
     return {

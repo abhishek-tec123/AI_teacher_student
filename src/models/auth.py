@@ -36,7 +36,7 @@ class PasswordResetConfirm(BaseModel):
     
     @validator('new_password')
     def validate_password_strength(cls, v):
-        from ..auth.password_utils import validate_password_strength
+        from common.auth.password_utils import validate_password_strength
         is_valid, error_msg = validate_password_strength(v)
         if not is_valid:
             raise ValueError(error_msg)
@@ -48,7 +48,7 @@ class PasswordChangeRequest(BaseModel):
     
     @validator('new_password')
     def validate_password_strength(cls, v):
-        from ..auth.password_utils import validate_password_strength
+        from common.auth.password_utils import validate_password_strength
         is_valid, error_msg = validate_password_strength(v)
         if not is_valid:
             raise ValueError(error_msg)
@@ -74,7 +74,7 @@ class StudentCreateWithAuth(BaseModel):
     def validate_password_strength(cls, v):
         if v is None:
             return v  # Will be generated if not provided
-        from ..auth.password_utils import validate_password_strength
+        from common.auth.password_utils import validate_password_strength
         is_valid, error_msg = validate_password_strength(v)
         if not is_valid:
             raise ValueError(error_msg)
@@ -88,7 +88,7 @@ class AdminCreateRequest(BaseModel):
     
     @validator('password')
     def validate_password_strength(cls, v):
-        from ..auth.password_utils import validate_password_strength
+        from common.auth.password_utils import validate_password_strength
         is_valid, error_msg = validate_password_strength(v)
         if not is_valid:
             raise ValueError(error_msg)

@@ -62,5 +62,4 @@ def configure_logging(
         uvicorn_logger.propagate = False
 
     # Reduce noise from third-party libraries
-    logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
     logging.getLogger("pymongo").setLevel(logging.WARNING)

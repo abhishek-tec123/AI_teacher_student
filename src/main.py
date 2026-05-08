@@ -51,15 +51,25 @@ async def tts_stream(request: TTSRequest):
 
 app.state.create_vectors_service = create_vectors_service
 
-origins = settings.cors_origins_list
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+if settings.environment == "development":
+    # Allow any origin in dev (ngrok URLs change, mobile testing, etc.)
+    # Credentials are sent via Authorization header, not cookies, so wildcard is safe
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=False,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+else:
+    origins = settings.cors_origins_list
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
 # Add performance monitoring middleware
 # app.add_middleware(PerformanceMonitoringMiddleware)

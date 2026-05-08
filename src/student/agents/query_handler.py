@@ -5,7 +5,7 @@ from student.services.intent_handlers import handle_chat_intent, handle_study_pl
 from student.agents.main_agent import detect_intent_and_topic
 from student.agents.quiz_generator import generate_quiz_from_history
 from student.agents.notes_agent import generate_notes, generate_summary
-from student.services.conversation_summarizer import update_running_summary
+from student.services.conversation_summarizer import update_session_summary, get_session_summary
 from student.utils.agent_utils import get_dynamic_agent_id_for_subject
 from student.repositories.conversation_repository import ConversationManager
 from student.repositories.preference_repository import PreferenceManager
@@ -200,21 +200,18 @@ def queryRouter(
                 # Keep only last 10 raw messages
                 context_store[payload.student_id] = session_context[-10:]
 
-                # Update conversation summary in background
-                from student.services.conversation_summarizer import update_running_summary
-                new_entry_summary = {
-                    "query": payload.query,
-                    "response": response,
-                    "evolution": evolution_scores
-                }
-                update_running_summary(
-                    student_id=payload.student_id,
-                    subject=payload.subject,
-                    new_entry=new_entry_summary,
-                    student_manager=student_manager,
-                    conversation_manager=ConversationManager()
-                )
-                logger.info(f"🔄 Background session update completed for: {payload.student_id}")
+                # Update session summary in background
+                chat_session_id = getattr(payload, 'chat_session_id', None)
+                if chat_session_id:
+                    update_session_summary(
+                        chat_session_id=chat_session_id,
+                        query=payload.query,
+                        response=response,
+                        student_manager=student_manager,
+                    )
+                    logger.info(f"🔄 Background session summary updated for session: {chat_session_id}")
+                else:
+                    logger.info(f"⚠️ Skipping session summary update - no chat_session_id")
             except Exception as e:
                 logger.info(f"❌ Background session update failed: {e}")
 
@@ -229,34 +226,42 @@ def queryRouter(
     # QUIZ
     # =============================
     elif intent == "QUIZ":
-        # Initialize conversation manager for quiz operations
-        conversation_manager = ConversationManager()
-        
-        # Fetch stored conversation history from MongoDB
-        stored_history = conversation_manager.get_chat_history_by_agent(
-            student_id=payload.student_id,
-            subject=payload.subject,
-            limit=20  # Get all available history for better quiz generation
-        )
-        
-        # Combine session context with stored history
-        # Convert stored history to the format expected by quiz generator
-        formatted_stored_history = []
-        for item in stored_history:
-            formatted_stored_history.append({
-                "query": item.get("query", ""),
-                "response": item.get("response", ""),
-                "evolution": item.get("evaluation", {})
-            })
-        
-        # Combine session context (most recent) with stored history
-        combined_history = formatted_stored_history + session_context
-        
+        # Fetch session summary for quiz generation (more efficient than raw history)
+        chat_session_id = getattr(payload, 'chat_session_id', None)
+        session_summary_text = ""
+        if chat_session_id:
+            session_summary_text = get_session_summary(
+                chat_session_id=chat_session_id,
+                student_manager=student_manager,
+                student_id=payload.student_id,
+            )
+            logger.info(f"📝 Using session summary for quiz generation")
+
+        # Fallback to raw history if no session summary available
+        if not session_summary_text:
+            conversation_manager = ConversationManager()
+            stored_history = conversation_manager.get_chat_history_by_agent(
+                student_id=payload.student_id,
+                subject=payload.subject,
+                limit=20
+            )
+            formatted_stored_history = []
+            for item in stored_history:
+                formatted_stored_history.append({
+                    "query": item.get("query", ""),
+                    "response": item.get("response", ""),
+                    "evolution": item.get("evaluation", {})
+                })
+            combined_history = formatted_stored_history + session_context
+        else:
+            combined_history = []
+
         quiz_data = generate_quiz_from_history(
-            history=combined_history,
+            history=combined_history if not session_summary_text else None,
             subject=payload.subject,
             topic=topic,
-            num_questions=5
+            num_questions=5,
+            session_summary=session_summary_text,
         )
 
         if not quiz_data["quiz"]:
@@ -334,9 +339,11 @@ def queryRouter(
     # =============================
     elif intent == "STUDY_PLAN":
         response = handle_study_plan_intent(
+            student_manager=student_manager,
             payload=payload,
             profile=profile,
-            topic=topic
+            topic=topic,
+            chat_session_id=getattr(payload, 'chat_session_id', None)
         )
         
         # 🚀 Start background conversation storage for study plan
@@ -375,30 +382,40 @@ def queryRouter(
     # NOTES (🚫 no summary update)
     # =============================
     elif intent == "NOTES":
-        # Fetch ALL stored conversation history from MongoDB (no limit)
-        stored_history = conversation_manager.get_chat_history_by_agent(
-            student_id=payload.student_id,
-            subject=payload.subject,
-            limit=None  # Get all available history for better notes generation
-        )
-        
-        # Combine session context with stored history
-        # Convert stored history to the format expected by notes generator
-        formatted_stored_history = []
-        for item in stored_history:
-            formatted_stored_history.append({
-                "query": item.get("query", ""),
-                "response": item.get("response", ""),
-                "evolution": item.get("evaluation", {})
-            })
-        
-        # Combine session context (most recent) with stored history
-        combined_history = formatted_stored_history + session_context
-        
+        # Fetch session summary for notes generation (more efficient than raw history)
+        chat_session_id = getattr(payload, 'chat_session_id', None)
+        session_summary_text = ""
+        if chat_session_id:
+            session_summary_text = get_session_summary(
+                chat_session_id=chat_session_id,
+                student_manager=student_manager,
+                student_id=payload.student_id,
+            )
+            logger.info(f"📝 Using session summary for notes generation")
+
+        # Fallback to raw history if no session summary available
+        if not session_summary_text:
+            stored_history = conversation_manager.get_chat_history_by_agent(
+                student_id=payload.student_id,
+                subject=payload.subject,
+                limit=None
+            )
+            formatted_stored_history = []
+            for item in stored_history:
+                formatted_stored_history.append({
+                    "query": item.get("query", ""),
+                    "response": item.get("response", ""),
+                    "evolution": item.get("evaluation", {})
+                })
+            combined_history = formatted_stored_history + session_context
+        else:
+            combined_history = []
+
         notes = generate_notes(
             topic=topic,
-            chat_history=combined_history,
-            student_profile=profile
+            chat_history=combined_history if not session_summary_text else None,
+            student_profile=profile,
+            session_summary=session_summary_text,
         )
 
         response = {
@@ -454,30 +471,40 @@ def queryRouter(
     # SUMMARY (🚫 no summary update)
     # =============================
     elif intent == "SUMMARY":
-        # Fetch ALL stored conversation history from MongoDB (no limit)
-        stored_history = conversation_manager.get_chat_history_by_agent(
-            student_id=payload.student_id,
-            subject=payload.subject,
-            limit=None  # Get all available history for comprehensive summary
-        )
-        
-        # Combine session context with stored history
-        # Convert stored history to the format expected by summary generator
-        formatted_stored_history = []
-        for item in stored_history:
-            formatted_stored_history.append({
-                "query": item.get("query", ""),
-                "response": item.get("response", ""),
-                "evolution": item.get("evaluation", {})
-            })
-        
-        # Combine session context (most recent) with stored history
-        combined_history = formatted_stored_history + session_context
-        
+        # Fetch session summary for summary generation (more efficient than raw history)
+        chat_session_id = getattr(payload, 'chat_session_id', None)
+        session_summary_text = ""
+        if chat_session_id:
+            session_summary_text = get_session_summary(
+                chat_session_id=chat_session_id,
+                student_manager=student_manager,
+                student_id=payload.student_id,
+            )
+            logger.info(f"📝 Using session summary for summary generation")
+
+        # Fallback to raw history if no session summary available
+        if not session_summary_text:
+            stored_history = conversation_manager.get_chat_history_by_agent(
+                student_id=payload.student_id,
+                subject=payload.subject,
+                limit=None
+            )
+            formatted_stored_history = []
+            for item in stored_history:
+                formatted_stored_history.append({
+                    "query": item.get("query", ""),
+                    "response": item.get("response", ""),
+                    "evolution": item.get("evaluation", {})
+                })
+            combined_history = formatted_stored_history + session_context
+        else:
+            combined_history = []
+
         summary = generate_summary(
             topic=topic,
-            chat_history=combined_history,
-            student_profile=profile
+            chat_history=combined_history if not session_summary_text else None,
+            student_profile=profile,
+            session_summary=session_summary_text,
         )
 
         response = {
@@ -529,14 +556,6 @@ def queryRouter(
 
         context_store[payload.student_id] = session_context[-10:]
 
-    # Fetch current summary from MongoDB for immediate response
-    try:
-        context_summary = conversation_manager.get_subject_summary(payload.student_id, payload.subject)
-        logger.info(f"📖 Retrieved existing summary for {payload.student_id}_{payload.subject}")
-    except Exception as e:
-        logger.info(f"⚠️ Failed to fetch existing summary: {e}")
-        context_summary = None
-
     return JSONResponse(
         content={
             "query": payload.query,
@@ -544,6 +563,5 @@ def queryRouter(
             "conversation_id": str(conversation_id) if conversation_id else None,
             "evolution": evolution_scores,
             "context_history": context_store[payload.student_id],
-            "context_summary": context_summary
         }
     )
