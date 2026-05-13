@@ -9,9 +9,13 @@ SERVER_HOST="ec2-13-233-214-195.ap-south-1.compute.amazonaws.com"
 SERVER_DIR="/home/ubuntu/AI_Teacher/AI_tescher_student"
 SERVICE_NAME="AITEACHER"
 
-# Detect if running on the server (hostname matches EC2)
+# Detect if running on the server
+# Method 1: hostname contains EC2 identifiers
+# Method 2: current directory matches SERVER_DIR
 IS_LOCAL_DEPLOY=false
-if [ "$(hostname -f 2>/dev/null || hostname)" = "ip-172-31-43-217" ] || [ "$(hostname -f 2>/dev/null || hostname)" = "$SERVER_HOST" ]; then
+HOSTNAME=$(hostname -f 2>/dev/null || hostname)
+CURRENT_DIR=$(pwd -P)
+if echo "$HOSTNAME" | grep -qE 'ip-172-31-43|ec2-13-233-214' || [ "$CURRENT_DIR" = "$SERVER_DIR" ]; then
     IS_LOCAL_DEPLOY=true
 fi
 
