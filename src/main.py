@@ -51,6 +51,13 @@ async def tts_stream(request: TTSRequest):
 
 app.state.create_vectors_service = create_vectors_service
 
+
+@app.get("/health")
+async def root_health():
+    """Simple root health check for load balancers."""
+    return {"status": "healthy", "service": settings.app_name}
+
+
 if settings.environment == "development":
     # Allow any origin in dev (ngrok URLs change, mobile testing, etc.)
     # Credentials are sent via Authorization header, not cookies, so wildcard is safe

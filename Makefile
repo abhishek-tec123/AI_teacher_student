@@ -52,7 +52,7 @@ run: check-uv
 # Run the FastAPI server (production mode, no reload)
 run-prod: check-uv
 	@echo "🚀 Starting FastAPI server (production mode)..."
-	@uv run uvicorn src.main:app --host 0.0.0.0 --port 8000 --workers 4
+	@uv run uvicorn src.main:app --host 0.0.0.0 --port 3018 --workers 4
 
 # Run with ngrok (for external access)
 run-server:
