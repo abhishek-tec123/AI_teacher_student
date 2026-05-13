@@ -50,8 +50,8 @@ run_server_setup() {
         uv venv
     fi
 
-    echo "==> Installing dependencies into .venv..."
-    uv pip install -r requirements.txt
+    echo "==> Installing dependencies into .venv from pyproject.toml..."
+    uv pip install -e .
 
     # Copy updated systemd service
     sudo cp "$SERVER_DIR/deploy/AITEACHER.service" /etc/systemd/system/
