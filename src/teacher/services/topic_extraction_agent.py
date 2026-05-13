@@ -77,7 +77,7 @@ class TopicExtractionAgent:
                 
             from common.llm.groq_client import sync_invoke_with_limiters
             self._llm = None  # We use centralized client; keep property for compatibility
-            self._llm_model_name = settings.groq_llm
+            self._llm_model_name = settings.default_llm_model
             self._llm_api_key = groq_api_key
         return self._llm
 

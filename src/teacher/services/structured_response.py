@@ -107,7 +107,7 @@ def generate_response_from_groq(
 
     response = sync_invoke_with_limiters(
         messages=messages,
-        model_name=settings.groq_llm,
+        model_name=settings.default_llm_model,
         api_key=groq_api_key,
         temperature=0.3,
         retry_on_429=True,
@@ -205,7 +205,7 @@ Return ONLY this JSON (no other text):
             from common.llm.groq_client import sync_invoke_with_limiters
             out = sync_invoke_with_limiters(
                 messages=[HumanMessage(content=prompt)],
-                model_name=settings.groq_llm,
+                model_name=settings.default_llm_model,
                 api_key=groq_api_key,
                 retry_on_429=True,
             )

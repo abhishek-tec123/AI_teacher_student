@@ -48,6 +48,11 @@ class Settings(BaseSettings):
     gemini_llm: str
     groq_llm: str
 
+    # Primary LLM (Ollama / OpenAI-compatible)
+    default_llm_model: str = "ollama/kimi-k2.6:cloud"
+    ollama_api_key: Optional[str] = None
+    ollama_base_url: str = "https://ollama.com/v1"
+
     # Embeddings / Models
     embed_model_name: str = "sentence-transformers/all-MiniLM-L6-v2"
 

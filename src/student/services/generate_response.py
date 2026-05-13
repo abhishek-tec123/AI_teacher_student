@@ -84,7 +84,7 @@ QUESTION:
 
             response = sync_invoke_with_limiters(
                 messages=[HumanMessage(content=full_input)],
-                model_name=settings.groq_llm,
+                model_name=settings.default_llm_model,
                 api_key=groq_api_key,
                 timeout=30.0,
                 max_retries=2,
@@ -151,7 +151,7 @@ QUESTION:
             # If true streaming is needed, use ChatGroq directly with caution
             response = sync_invoke_with_limiters(
                 messages=[HumanMessage(content=full_input)],
-                model_name=settings.groq_llm,
+                model_name=settings.default_llm_model,
                 api_key=groq_api_key,
                 timeout=30.0,
                 max_retries=2,
@@ -238,7 +238,7 @@ QUESTION:
 
         response = sync_invoke_with_limiters(
             messages=[HumanMessage(content=full_input)],
-            model_name=settings.groq_llm,
+            model_name=settings.default_llm_model,
             api_key=groq_api_key,
             retry_on_429=True,
         )

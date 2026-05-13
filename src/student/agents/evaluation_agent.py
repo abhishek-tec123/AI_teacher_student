@@ -16,7 +16,7 @@ def _get_evaluator_llm():
         if not api_key:
             raise ValueError("GROQ_API_KEY is not set in environment variables.")
         _evaluator_llm = ChatGroq(
-            model_name="llama-3.1-8b-instant",
+            model_name=settings.groq_llm,
             api_key=api_key,
             temperature=0.1,
             max_tokens=400,
@@ -30,7 +30,7 @@ def _evaluate_with_limiter(messages):
         from common.llm.groq_client import sync_invoke_with_limiters
         return sync_invoke_with_limiters(
             messages=messages,
-            model_name="llama-3.1-8b-instant",
+            model_name=settings.default_llm_model,
             temperature=0.1,
             max_tokens=400,
             retry_on_429=True,

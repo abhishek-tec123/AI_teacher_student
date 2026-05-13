@@ -79,7 +79,7 @@ def call_llm_direct(prompt: str, content: str = "") -> str:
         from common.llm.groq_client import sync_invoke_with_limiters
         response = sync_invoke_with_limiters(
             messages=[HumanMessage(content=full_input)],
-            model_name=settings.groq_llm,
+            model_name=settings.default_llm_model,
             api_key=groq_api_key,
             retry_on_429=True,
         )

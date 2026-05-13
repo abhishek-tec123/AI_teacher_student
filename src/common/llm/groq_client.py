@@ -12,6 +12,7 @@ from common.llm.groq_rate_limiter import (
     get_concurrency_limiter,
     estimate_tokens,
 )
+from common.llm.ollama_client import sync_invoke_ollama, async_invoke_ollama
 
 logger = logging.getLogger(__name__)
 
@@ -155,10 +156,33 @@ def sync_invoke_with_limiters(
     retry_base_delay: float = 2.0,
 ) -> Any:
     """
-    Synchronous Groq LLM invocation with centralized rate limiting and retry logic.
+    Synchronous LLM invocation with provider routing and fallback.
+    Primary: Ollama (when model_name starts with 'ollama/')
+    Secondary: Groq (fallback on any Ollama failure)
     Safe to call from any thread, including FastAPI's run_in_threadpool worker threads.
     """
-    _model_name = model_name or getattr(settings, "groq_llm", "llama-3.1-8b-instant")
+    _resolved_model = model_name or getattr(settings, "default_llm_model", getattr(settings, "groq_llm", "llama-3.1-8b-instant"))
+
+    # Route to Ollama when model starts with 'ollama/'
+    if _resolved_model.startswith("ollama/"):
+        _actual_model = _resolved_model.replace("ollama/", "")
+        try:
+            return sync_invoke_ollama(
+                messages=messages,
+                model_name=_actual_model,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                timeout=timeout,
+                max_retries=max_retries,
+                retry_on_429=retry_on_429,
+                retry_max_attempts=retry_max_attempts,
+                retry_base_delay=retry_base_delay,
+            )
+        except Exception as e:
+            logger.warning(f"Ollama failed ({e}), falling back to Groq...")
+            _resolved_model = getattr(settings, "groq_llm", "llama-3.1-8b-instant")
+
+    _model_name = _resolved_model
     _api_key = api_key or getattr(settings, "groq_api_key", None)
     if not _api_key:
         raise ValueError("GROQ_API_KEY is not set in environment variables.")
@@ -215,9 +239,32 @@ async def async_invoke_with_limiters(
     retry_base_delay: float = 2.0,
 ) -> Any:
     """
-    Async Groq LLM invocation with centralized rate limiting and retry logic.
+    Async LLM invocation with provider routing and fallback.
+    Primary: Ollama (when model_name starts with 'ollama/')
+    Secondary: Groq (fallback on any Ollama failure)
     """
-    _model_name = model_name or getattr(settings, "groq_llm", "llama-3.1-8b-instant")
+    _resolved_model = model_name or getattr(settings, "default_llm_model", getattr(settings, "groq_llm", "llama-3.1-8b-instant"))
+
+    # Route to Ollama when model starts with 'ollama/'
+    if _resolved_model.startswith("ollama/"):
+        _actual_model = _resolved_model.replace("ollama/", "")
+        try:
+            return await async_invoke_ollama(
+                messages=messages,
+                model_name=_actual_model,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                timeout=timeout,
+                max_retries=max_retries,
+                retry_on_429=retry_on_429,
+                retry_max_attempts=retry_max_attempts,
+                retry_base_delay=retry_base_delay,
+            )
+        except Exception as e:
+            logger.warning(f"Ollama failed ({e}), falling back to Groq...")
+            _resolved_model = getattr(settings, "groq_llm", "llama-3.1-8b-instant")
+
+    _model_name = _resolved_model
     _api_key = api_key or getattr(settings, "groq_api_key", None)
     if not _api_key:
         raise ValueError("GROQ_API_KEY is not set in environment variables.")
