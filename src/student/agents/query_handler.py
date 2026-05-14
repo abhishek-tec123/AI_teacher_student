@@ -186,30 +186,32 @@ def queryRouter(
             "status": "success"
         }
 
-        # 🚀 BACKGROUND: Update session context and summary (non-blocking)
-        def background_session_update():
+        # 🚀 IMMEDIATE: Update session context (MUST be synchronous for next query consistency)
+        try:
+            new_entry = {
+                "conversation_id": str(conversation_id) if conversation_id else None,
+                "query": payload.query,
+                "response": response,
+                "evolution": evolution_scores
+            }
+
+            session_context.append(new_entry)
+            # Keep only last 10 raw messages
+            context_store[payload.student_id] = session_context[-10:]
+            logger.info(f"✅ Session context updated synchronously for {payload.student_id}")
+        except Exception as e:
+            logger.info(f"❌ Session context update failed: {e}")
+
+        # 🚀 BACKGROUND: Update summary and other non-critical tasks
+        def background_tasks():
             try:
-                new_entry = {
-                    "conversation_id": str(conversation_id) if conversation_id else None,
-                    "query": payload.query,
-                    "response": response,
-                    "evolution": evolution_scores
-                }
-
-                session_context.append(new_entry)
-                # Keep only last 10 raw messages
-                context_store[payload.student_id] = session_context[-10:]
-
-                # Session summary is handled by intent_handlers.py (every 5 messages, last 5 context)
-                # Skip duplicate update here to save LLM calls
-                logger.info(f"⏭️ Session summary skipped in query_handler (handled by intent_handlers)")
+                # Session summary is handled by intent_handlers.py (every 5 messages)
+                logger.info(f"⏭️ Background tasks for summary/analytics started")
             except Exception as e:
-                logger.info(f"❌ Background session update failed: {e}")
+                logger.info(f"❌ Background tasks failed: {e}")
 
-        # Start background processing
-        session_thread = threading.Thread(target=background_session_update, daemon=True)
+        session_thread = threading.Thread(target=background_tasks, daemon=True)
         session_thread.start()
-        logger.info(f"🚀 Session update moved to background for faster response")
 
         return immediate_response
 
