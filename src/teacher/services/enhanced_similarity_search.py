@@ -35,7 +35,7 @@ async def retrieve_chunks_with_shared_knowledge_async(
     subject_agent_id: str = None,
     embedding_model=None,
     student_profile: dict = None,
-    top_k: int = 15,
+    top_k: int = 5,
     disable_rl: bool = False
 ) -> dict:
     """
@@ -280,7 +280,7 @@ def retrieve_chunks_with_shared_knowledge(
     subject_agent_id: str = None,
     embedding_model=None,
     student_profile: dict = None,
-    top_k: int = 15,
+    top_k: int = 5,
     disable_rl: bool = False
 ) -> dict:
     """

@@ -74,7 +74,7 @@ class RetrievalOrchestratorAgent:
         collection_name: str,
         student_profile: Optional[dict] = None,  # user can pass dict or None
         subject_agent_id: Optional[str] = None,  # for shared knowledge
-        top_k: int = 10
+        top_k: int = 5
     ) -> str:
         """
         Async version of retrieval and response orchestration.
@@ -129,7 +129,7 @@ class RetrievalOrchestratorAgent:
         collection_name: str,
         student_profile: Optional[dict] = None,  # user can pass dict or None
         subject_agent_id: Optional[str] = None,  # for shared knowledge
-        top_k: int = 10
+        top_k: int = 5
     ) -> str:
         """
         Synchronous wrapper for backward compatibility.
@@ -166,7 +166,7 @@ class RetrievalOrchestratorAgent:
         collection_name: str,
         student_profile: Optional[dict] = None,
         subject_agent_id: Optional[str] = None,
-        top_k: int = 10
+        top_k: int = 5
     ) -> str:
         """
         Fallback synchronous orchestration.

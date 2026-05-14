@@ -200,18 +200,9 @@ def queryRouter(
                 # Keep only last 10 raw messages
                 context_store[payload.student_id] = session_context[-10:]
 
-                # Update session summary in background
-                chat_session_id = getattr(payload, 'chat_session_id', None)
-                if chat_session_id:
-                    update_session_summary(
-                        chat_session_id=chat_session_id,
-                        query=payload.query,
-                        response=response,
-                        student_manager=student_manager,
-                    )
-                    logger.info(f"🔄 Background session summary updated for session: {chat_session_id}")
-                else:
-                    logger.info(f"⚠️ Skipping session summary update - no chat_session_id")
+                # Session summary is handled by intent_handlers.py (every 5 messages, last 5 context)
+                # Skip duplicate update here to save LLM calls
+                logger.info(f"⏭️ Session summary skipped in query_handler (handled by intent_handlers)")
             except Exception as e:
                 logger.info(f"❌ Background session update failed: {e}")
 

@@ -22,7 +22,7 @@ VECTOR_INDEX_NAME = "vector_index"
 # In the current schema, the embedding vector is stored under `embedding.vector`
 VECTOR_PATH = "embedding.vector"
 
-TOP_K = 10
+TOP_K = 5
 MIN_SCORE_THRESHOLD = 0.3  # Threshold for chunk selection - balanced with content validation
 
 from teacher.search.response_cache import ResponseCache
