@@ -91,9 +91,19 @@ class StudentAgent:
             chunk_context (str, optional): Pre-built chunk context for deep-dive
         """
         try:
-            loop = asyncio.get_event_loop()
+            try:
+                loop = asyncio.get_event_loop()
+            except RuntimeError:
+                # No event loop in this thread
+                return asyncio.run(
+                    self.ask_async(
+                        query, class_name, subject, student_profile, subject_agent_id, top_k,
+                        is_deep_dive, chunk_context,
+                    )
+                )
+
             if loop.is_running():
-                # If already in an event loop, use run_in_executor
+                # If already in an event loop, use a separate thread to run the async task
                 import concurrent.futures
                 with concurrent.futures.ThreadPoolExecutor() as executor:
                     future = executor.submit(
@@ -105,7 +115,7 @@ class StudentAgent:
                     )
                     return future.result(timeout=60)
             else:
-                # If no event loop running, run directly
+                # Loop exists but not running
                 return asyncio.run(
                     self.ask_async(
                         query, class_name, subject, student_profile, subject_agent_id, top_k,

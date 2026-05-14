@@ -178,7 +178,63 @@ def detect_intent_and_topic(query: str, current_subject: str = None) -> dict:
                 "topic": current_subject or "General"
             }
 
+    # PRACTICE / PROBLEMS check (simple rule before LLM fallback)
+    if any(word in q for word in ["problem", "exercise", "practice", "solve", "test me"]):
+        return {
+            "intent": "CHAT", # Handled by the dynamic prompt rule we added
+            "topic": extract_topic_from_sentence(query),
+            "is_practice": True
+        }
+
+    # If no rules match, use LLM-based classification for "anything else"
+    llm_intent = classify_intent_with_prompt(query, current_subject)
+    if llm_intent.get("confidence", 0) > 0.6:
+        return llm_intent
+
     return {"intent": "CHAT", "query": q, "topic": None}
+
+def classify_intent_with_prompt(query: str, current_subject: str = None) -> dict:
+    """
+    LLM-based intent detection for complex queries that don't match rules.
+    This handles the "anything" a student can ask.
+    """
+    from student.services.generate_response import generate_response_with_groq
+    
+    classifier_prompt = f"""
+Analyze the student query and classify the primary intent and topic.
+Subject Context: {current_subject or "Academic Studies"}
+
+Intents:
+- QUIZ: Start a formal multiple-choice test.
+- STUDY_PLAN: Create a roadmap or learning schedule.
+- NOTES: Generate structured study notes.
+- SUMMARY: Summarize recent conversation or a topic.
+- CHAT: Ask a question, request practice problems, deep-dive into a concept, or general conversation.
+
+Return ONLY a JSON object:
+{{
+  "intent": "QUIZ|STUDY_PLAN|NOTES|SUMMARY|CHAT",
+  "topic": "extracted main topic or null",
+  "confidence": 0.0-1.0
+}}
+"""
+    try:
+        response = generate_response_with_groq(
+            query=f"Classify this query: '{query}'",
+            system_prompt=classifier_prompt,
+            model_name="llama-3.1-8b-instant" # Fast model for classification
+        )
+        # Parse JSON from response
+        import json
+        match = re.search(r"\{.*\}", response, re.DOTALL)
+        if match:
+            result = json.loads(match.group(0))
+            return result
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(f"Intent classification failed: {e}")
+    
+    return {"intent": "CHAT", "topic": None}
 
 
 # =====================================================
