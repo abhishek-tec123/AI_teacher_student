@@ -179,7 +179,8 @@ def detect_intent_and_topic(query: str, current_subject: str = None) -> dict:
             }
 
     # PRACTICE / PROBLEMS check (simple rule before LLM fallback)
-    if any(word in q for word in ["problem", "exercise", "practice", "solve", "test me"]):
+    practice_keywords = ["problem", "exercise", "practice", "solve", "test me", "task", "assignment", "activity", "sum", "example", "question"]
+    if any(word in q for word in practice_keywords):
         return {
             "intent": "CHAT", # Handled by the dynamic prompt rule we added
             "topic": extract_topic_from_sentence(query),
