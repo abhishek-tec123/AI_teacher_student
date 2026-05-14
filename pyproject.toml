@@ -1,3 +1,7 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "langchain-adk"
 version = "0.1.0"
@@ -13,7 +17,7 @@ dependencies = [
     "fastapi>=0.110.0,<0.129.0",
     "fitz>=0.0.1.dev2",
     "geopy>=2.4.1",
-    # 🔐 LangChain (Pinned for NumPy 1.x compatibility)
+    # LangChain (Pinned for NumPy 1.x compatibility)
     "langchain>=0.3.0,<0.4.0",
     "langchain-community==0.3.27",
     "langchain-experimental>=0.3.0,<0.4.0",
@@ -22,31 +26,41 @@ dependencies = [
     "langchain-tavily>=0.1.0,<0.3.0",
     "langchain-text-splitters>=0.3.0,<0.4.0",
     "litellm>=1.60.0,<2.0.0",
-    # 📊 Data stack (NumPy pinned for Torch compatibility)
+    # Data stack (NumPy pinned for Torch compatibility)
     "numpy>=1.26.4,<2.0",
     "pandas>=2.2.0,<2.4.0",
     "matplotlib>=3.8.0,<3.11.0",
-    # 🔥 ML stack
+    # ML stack
     "torch==2.2.2",
     "sentence-transformers>=2.6.0,<3.0.0",
     "faiss-cpu>=1.7.4,<1.8.0",
     "spacy>=3.7.0,<3.9.0",
     "tiktoken>=0.5.0,<1.0.0",
-    # 🧾 Documents / OCR
+    # Documents / OCR
     "pillow>=10.0.0,<13.0.0",
     "pymupdf>=1.23.0,<1.27.0",
     "pytesseract>=0.3.10,<0.4.0",
-    # 🔐 Auth / Security
+    # Auth / Security
     "passlib[bcrypt]>=1.7.4",
     "python-jose[cryptography]>=3.3.0,<4.0.0",
     "pydantic[email]>=2.5.0,<3.0.0",
-    # 🗄️ Storage
+    "pydantic-settings>=2.0.0",
+    # Storage
     "pymongo>=4.6.0,<5.0.0",
     "redis>=5.0.0,<8.0.0",
-    # 🌐 Server
+    # Server
     "python-multipart>=0.0.6",
     "uvicorn>=0.27.0,<0.41.0",
-    # 🖥️ UI / CLI
-    "streamlit>=1.30.0,<2.0.0",
+    # CLI
     "typer>=0.9.0,<1.0.0",
+    "google-genai>=1.67.0",
+    # TTS
+    "edge-tts>=7.2.7",
+    "gtts>=2.5.4",
+    "pydub>=0.25.1",
+    "pyaudio>=0.2.14",
+    "pyttsx3>=2.99",
 ]
+
+[tool.setuptools.packages.find]
+where = ["src"]
