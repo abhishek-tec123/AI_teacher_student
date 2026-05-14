@@ -187,9 +187,14 @@ def generate_response_with_groq(
 
     try:
         # Try to run async version for better performance
-        loop = asyncio.get_event_loop()
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            # No event loop in this thread
+            return asyncio.run(_generate_response_async(query, context, system_prompt, model_name=model_name))
+
         if loop.is_running():
-            # If already in an event loop, use run_in_executor
+            # If already in an event loop, use a separate thread
             import concurrent.futures
             with concurrent.futures.ThreadPoolExecutor() as executor:
                 future = executor.submit(
@@ -198,7 +203,7 @@ def generate_response_with_groq(
                 )
                 return future.result(timeout=30)
         else:
-            # If no event loop running, run directly
+            # Loop exists but not running
             return asyncio.run(_generate_response_async(query, context, system_prompt, model_name=model_name))
     except Exception as e:
         logger.error(f"Error in async wrapper: {e}")

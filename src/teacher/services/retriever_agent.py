@@ -135,9 +135,18 @@ class RetrievalOrchestratorAgent:
         Synchronous wrapper for backward compatibility.
         """
         try:
-            loop = asyncio.get_event_loop()
+            try:
+                loop = asyncio.get_event_loop()
+            except RuntimeError:
+                # No event loop in this thread
+                return asyncio.run(
+                    self.orchestrate_retrieval_and_response_async(
+                        query, db_name, collection_name, student_profile, subject_agent_id, top_k
+                    )
+                )
+
             if loop.is_running():
-                # If already in an event loop, use run_in_executor
+                # If already in an event loop, use a separate thread
                 import concurrent.futures
                 with concurrent.futures.ThreadPoolExecutor() as executor:
                     future = executor.submit(
@@ -148,7 +157,7 @@ class RetrievalOrchestratorAgent:
                     )
                     return future.result(timeout=60)
             else:
-                # If no event loop running, run directly
+                # Loop exists but not running
                 return asyncio.run(
                     self.orchestrate_retrieval_and_response_async(
                         query, db_name, collection_name, student_profile, subject_agent_id, top_k

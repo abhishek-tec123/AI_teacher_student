@@ -287,9 +287,19 @@ def retrieve_chunks_with_shared_knowledge(
     Synchronous wrapper for backward compatibility.
     """
     try:
-        loop = asyncio.get_event_loop()
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            # No event loop in this thread
+            return asyncio.run(
+                retrieve_chunks_with_shared_knowledge_async(
+                    query, db_name, collection_name, subject_agent_id,
+                    embedding_model, student_profile, top_k
+                )
+            )
+
         if loop.is_running():
-            # If already in an event loop, use run_in_executor
+            # If already in an event loop, use a separate thread
             import concurrent.futures
             with concurrent.futures.ThreadPoolExecutor() as executor:
                 future = executor.submit(
@@ -301,7 +311,7 @@ def retrieve_chunks_with_shared_knowledge(
                 )
                 return future.result(timeout=30)
         else:
-            # If no event loop running, run directly
+            # Loop exists but not running
             return asyncio.run(
                 retrieve_chunks_with_shared_knowledge_async(
                     query, db_name, collection_name, subject_agent_id,
