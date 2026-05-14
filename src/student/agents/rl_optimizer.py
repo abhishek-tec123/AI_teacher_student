@@ -136,7 +136,7 @@ Rules:
 3. DO NOT carry over previous topics if the new query is a clear shift in subject (e.g., student asks about a different chapter).
 4. Output ONLY the rewritten query text. No explanations."""
         if context_text:
-            prompt += f"\nRecent Context (Last 2 turns):\n{context_text[:500]}"
+            prompt += f"\nRecent Context (Last 2 turns):\n{context_text[:2000]}"
             
         try:
             rewritten = generate_response_with_groq(
