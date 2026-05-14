@@ -39,7 +39,7 @@ class StudentAgent:
         subject: str,
         student_profile: Optional[Dict] = None,
         subject_agent_id: Optional[str] = None,  # for shared knowledge
-        top_k: int = 10,
+        top_k: int = 5,
         is_deep_dive: bool = False,
         chunk_context: Optional[str] = None,
     ):
@@ -74,7 +74,7 @@ class StudentAgent:
         subject: str,
         student_profile: Optional[Dict] = None,
         subject_agent_id: Optional[str] = None,  # for shared knowledge
-        top_k: int = 10,
+        top_k: int = 5,
         is_deep_dive: bool = False,
         chunk_context: Optional[str] = None,
     ):
@@ -124,7 +124,7 @@ class StudentAgent:
         subject: str,
         student_profile: Optional[Dict] = None,
         subject_agent_id: Optional[str] = None,
-        top_k: int = 10,
+        top_k: int = 5,
         is_deep_dive: bool = False,
         chunk_context: Optional[str] = None,
     ):

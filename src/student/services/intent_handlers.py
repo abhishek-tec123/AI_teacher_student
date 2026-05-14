@@ -7,7 +7,7 @@ from student.services.learning_progress import (
 from student.agents.main_agent import diagnosis_chat, detect_deep_dive_intent
 from student.agents.quiz_generator import generate_quiz_from_history
 from student.agents.study_plan import generate_study_plan_with_subtopics
-from student.agents.evaluation_agent import evaluate_response
+# from student.agents.evaluation_agent import evaluate_response  # Disabled to save LLM tokens
 from student.agents.vector_performance_updater import update_vector_performance
 from student.utils.agent_utils import get_dynamic_agent_id_for_subject  # ✅ Import dynamic agent ID mapping
 from student.services.general_chat import is_greeting, handle_greeting_chat, handle_general_chat_llm, is_general_chat
@@ -95,6 +95,9 @@ def handle_chat_intent(
         )
         if last_convo:
             chunk_context = last_convo.get("additional_data", {}).get("chunk_context", "")
+            # Cap chunk context to prevent token explosion on deep-dive reuse
+            if chunk_context:
+                chunk_context = chunk_context[:8000]
             if chunk_context:
                 logger.info(f"🔍 Reusing chunk_context from conversation {last_convo.get('_id')}")
                 # Compute deep-dive count from previous conversation
@@ -216,14 +219,17 @@ def handle_chat_intent(
             else:
                 logger.info(f"⚠️ Background conversation updated - Agent not found for subject '{payload.subject}'")
             
-            # 3️⃣ Evaluate academic response (moved to background)
-            evaluation = evaluate_response(
-                query=payload.query,
-                response=response,
-                subject=payload.subject,
-                profile=updated_profile,
-            )
-            logger.info("🧠 Background evaluation completed")
+            # 3️⃣ Evaluate academic response (skipped — heuristic fallback to save tokens)
+            evaluation = {
+                "pedagogical_value": 50.0,
+                "critical_confidence": 50.0,
+                "rag_relevance": 50.0,
+                "answer_completeness": 50.0,
+                "hallucination_risk": 50.0,
+                "overall_score": 50.0,
+                "skipped": True,
+            }
+            logger.info("⏭️ Background evaluation skipped (heuristic fallback used)")
             
             # 4️⃣ Store evaluation scores in conversation
             if evaluation:
@@ -248,17 +254,27 @@ def handle_chat_intent(
                 logger.info(f"   - Student ID: {payload.student_id}")
                 logger.info(f"   - Performance Update Result: {performance_update_result}")
             
-            # Update session summary in background
+            # Update session summary in background (every 5 messages, using last 5)
             if chat_session_id:
                 from student.services.conversation_summarizer import update_session_summary
-                update_session_summary(
-                    chat_session_id=chat_session_id,
-                    query=payload.query,
-                    response=response,
-                    student_manager=student_manager,
+                session_conversations = conversation_manager.get_conversations_by_chat_session(
                     student_id=payload.student_id,
+                    chat_session_id=chat_session_id,
                 )
-                logger.info("📝 Background session summary update completed")
+                if len(session_conversations) >= 5 and len(session_conversations) % 5 == 0:
+                    # Take the 5 most recent conversations (newest first) for context
+                    last_five = session_conversations[:5]
+                    # Reverse to chronological order for the summarizer
+                    last_five = list(reversed(last_five))
+                    update_session_summary(
+                        chat_session_id=chat_session_id,
+                        conversation_batch=last_five,
+                        student_manager=student_manager,
+                        student_id=payload.student_id,
+                    )
+                    logger.info(f"📝 Batch session summary updated ({len(session_conversations)} total messages, using last 5 context + previous summary)")
+                else:
+                    logger.info(f"⏭️ Skipping session summary ({len(session_conversations)} messages, updating every 5)")
             else:
                 logger.info("⚠️ Skipping session summary update - no chat_session_id")
             
@@ -295,7 +311,23 @@ def handle_chat_intent(
             logger.info("📈 Background final progression update completed")
             
             logger.info("✅ All background processing completed successfully")
-            
+
+            # Log LLM call summary for this request
+            try:
+                from common.llm.groq_client import get_recent_llm_calls
+                recent_calls = get_recent_llm_calls(seconds=60.0)
+                if recent_calls:
+                    total_tokens = sum(c["tokens"] for c in recent_calls)
+                    logger.info("=" * 60)
+                    logger.info(f"🤖 LLM CALL SUMMARY — {len(recent_calls)} call(s), ~{total_tokens} tokens")
+                    for i, call in enumerate(recent_calls, 1):
+                        logger.info(f"   {i}. {call['caller_file']}::{call['caller_func']} → {call['model']} ({call['tokens']} tokens)")
+                    logger.info("=" * 60)
+                else:
+                    logger.info("🤖 LLM CALL SUMMARY — 0 calls (all cached or skipped)")
+            except Exception:
+                pass
+
         except Exception as e:
             logger.info(f"❌ Background processing failed: {e}")
     

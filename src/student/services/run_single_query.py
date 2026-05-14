@@ -14,7 +14,7 @@ def run_query(
     collection_name: str,
     student_profile: dict = None,
     subject_agent_id: str = None,  # for shared knowledge
-    top_k: int = 10,
+    top_k: int = 5,
     is_deep_dive: bool = False,
     chunk_context: str = None,
 ):

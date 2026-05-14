@@ -86,8 +86,9 @@ logger = logging.getLogger(__name__)
 def update_session_summary(
     *,
     chat_session_id: str,
-    query: str,
-    response: str,
+    query: str = "",
+    response: str = "",
+    conversation_batch: list = None,
     student_manager,
     student_id: str = "",
 ) -> str:
@@ -147,33 +148,41 @@ def update_session_summary(
     else:
         response_text = response
 
+    if conversation_batch:
+        # Format multiple conversation turns
+        batch_lines = []
+        for i, turn in enumerate(conversation_batch, 1):
+            turn_response = turn.get("response", "")
+            if isinstance(turn_response, dict):
+                turn_response = json.dumps(turn_response)
+            elif not isinstance(turn_response, str):
+                turn_response = str(turn_response)
+            batch_lines.append(f"Turn {i}:\nStudent: {turn.get('query', '')}\nTeacher: {turn_response}")
+        conversation_text = "\n\n".join(batch_lines)
+    else:
+        conversation_text = f"Student: {query}\nTeacher: {response_text}"
+
     combined_text = f"""
 PREVIOUS SESSION SUMMARY:
 {previous_summary}
 
 NEW CONVERSATION:
-Student: {query}
-Teacher: {response_text}
+{conversation_text}
 """.strip()
 
     # -----------------------------
     # 3️⃣ Generate Detailed Session Summary
     # -----------------------------
     try:
-        prompt = """You are creating a detailed learning session summary for a student.
-This summary must be comprehensive enough to generate study notes and quiz questions from it later.
+        prompt = """You are creating a learning session summary for a student.
 
 RULES:
-- Preserve ALL key concepts, definitions, and explanations discussed
-- Include specific examples mentioned
-- Note any formulas or equations discussed (use Unicode subscripts/superscripts)
-- Track the student's confusion points and how they were resolved
-- Maintain chronological order of topics covered
-- Write in paragraph form (no bullet points, no markdown, no emojis)
-- Be thorough and detailed — this is the ONLY record of the session
-- Include enough detail that a notes-generating agent can create comprehensive study material from this alone
-
-Update the previous summary with the new conversation, integrating it naturally."""
+- CRITICAL: Preserve ALL topics from the previous summary. Do NOT drop earlier topics.
+- Add new concepts and topics from the new conversation.
+- Keep it concise but comprehensive — cover every topic discussed so far.
+- Write in plain text (no bullet points, no markdown, no emojis).
+- Update the previous summary with the new conversation, integrating it naturally.
+- The final summary must include everything from the previous summary plus the new topics."""
 
         updated_summary = summarize_text_with_groq(
             text=combined_text,

@@ -395,7 +395,7 @@ def diagnosis_chat(
                 "rl_metadata": {
                     "trajectory": ["cached_response"],
                     "optimized_query": query,
-                    "top_k": 10,
+                    "top_k": 5,
                     "cache_hit": True
                 },
                 "detected_language": detected_language,  # Include detected language
@@ -412,14 +412,11 @@ def diagnosis_chat(
     global_rag_settings = get_global_rag_settings()
 
     # -----------------------------
-    # Diagnose confusion (skip for deep-dive)
+    # Confusion diagnosis disabled to save LLM tokens
+    # Will be re-enabled with a more efficient approach in the future
     # -----------------------------
-    if is_deep_dive:
-        confusion_type = "NO_CONFUSION"
-        diagnosis = {"confusion_type": "NO_CONFUSION", "reason": "", "teaching_strategy": ""}
-    else:
-        diagnosis = diagnose_student_confusion(query, subject, class_name)
-        confusion_type = diagnosis.get("confusion_type", "NO_CONFUSION")
+    confusion_type = "NO_CONFUSION"
+    diagnosis = {"confusion_type": "NO_CONFUSION", "reason": "Disabled for token efficiency", "teaching_strategy": ""}
 
     # -----------------------------
     # Get agent metadata for introduction
@@ -484,12 +481,12 @@ def diagnosis_chat(
     # RL-based Query Optimization (skip for deep-dive)
     # -----------------------------
     if is_deep_dive:
-        top_k = 10
+        top_k = 5
         state = {"current_query": query, "previous_actions": ["deep_dive_skip_rl"]}
     else:
         optimizer = RLOptimizer()
         state = optimizer.define_state(query=query, context_chunks=[], student_profile=student_profile)
-        top_k = 10
+        top_k = 5
 
         # Small RL loop to refine query/retrieval (max 2 steps for latency)
         for _ in range(2):
@@ -509,7 +506,7 @@ def diagnosis_chat(
 
                 state["current_query"] = optimizer.rewrite_query(state["current_query"], context_text=recent_context)
             elif action == "expand_context":
-                top_k += 5
+                top_k = min(top_k + 2, 5)
             elif action == "generate_response":
                 break
 
@@ -595,16 +592,7 @@ def diagnosis_chat(
             "prompt_length": len(full_prompt),
             "rag_enabled": global_rag_settings.get("enabled", False),
             "rag_content_length": len(global_rag_settings.get("content", "")) if global_rag_settings.get("enabled", False) else 0,
-            "base_prompt": build_teacher_prompt(
-                student_profile=student_profile,
-                class_name=class_name,
-                subject=subject,
-                confusion_type=confusion_type,
-                session_context=full_context,
-                current_query=query,
-                agent_metadata=agent_metadata,
-                language=detected_language  # Include language in debug base_prompt
-            ).replace(f"\n\n--- GLOBAL RAG CONTEXT ---\n{global_rag_settings.get('content', '')}\n--- END GLOBAL RAG CONTEXT ---\n", "") if global_rag_settings.get("enabled", False) else full_prompt
+            "base_prompt": full_prompt.replace(f"\n\n--- GLOBAL RAG CONTEXT ---\n{global_rag_settings.get('content', '')}\n--- END GLOBAL RAG CONTEXT ---\n", "") if global_rag_settings.get("enabled", False) else full_prompt
         }
     }
 
