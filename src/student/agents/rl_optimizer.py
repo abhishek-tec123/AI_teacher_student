@@ -139,7 +139,11 @@ Output ONLY the rewritten query text."""
             prompt += f"\nRecent Context:\n{context_text[:500]}"
             
         try:
-            rewritten = generate_response_with_groq(query=query, system_prompt=prompt)
+            rewritten = generate_response_with_groq(
+                query=query,
+                system_prompt=prompt,
+                model_name="llama-3.1-8b-instant",
+            )
             logger.info(f"RL Action: Rewritten query -> {rewritten}")
             return rewritten
         except Exception as e:

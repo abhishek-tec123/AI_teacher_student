@@ -6,6 +6,7 @@ from student.agents.study_plan import extract_topic_from_sentence
 from student.agents.rl_optimizer import RLOptimizer
 from admin.services.global_settings_service import get_global_rag_settings
 from common.utils.prompt_templates import get_base_prompt as get_template_base_prompt, build_teacher_prompt
+from common.llm.groq_rate_limiter import is_daily_budget_low
 
 # =====================================================
 # 🔐 IN-MEMORY PROMPT CACHE (GLOBAL, NO DB)
@@ -478,11 +479,20 @@ def diagnosis_chat(
     full_context = personal_info_summary + session_history_text
 
     # -----------------------------
-    # RL-based Query Optimization (skip for deep-dive)
+    # RL-based Query Optimization (skip for deep-dive, short queries, or low budget)
     # -----------------------------
-    if is_deep_dive:
+    query_word_count = len(query.split())
+    budget_low = is_daily_budget_low(threshold=10000)
+    skip_rl = is_deep_dive or budget_low or query_word_count < 5
+
+    if skip_rl:
         top_k = 5
-        state = {"current_query": query, "previous_actions": ["deep_dive_skip_rl"]}
+        skip_reason = "deep_dive" if is_deep_dive else ("low_budget" if budget_low else "short_query")
+        state = {"current_query": query, "previous_actions": [f"skip_rl:{skip_reason}"]}
+        if budget_low:
+            logger.info("⏭️ RL rewrite skipped: daily token budget low")
+        elif query_word_count < 5:
+            logger.info("⏭️ RL rewrite skipped: query too short")
     else:
         optimizer = RLOptimizer()
         state = optimizer.define_state(query=query, context_chunks=[], student_profile=student_profile)

@@ -13,6 +13,7 @@ from student.utils.agent_utils import get_dynamic_agent_id_for_subject  # ✅ Im
 from student.services.general_chat import is_greeting, handle_greeting_chat, handle_general_chat_llm, is_general_chat
 from student.repositories.conversation_repository import ConversationManager
 from student.repositories.preference_repository import PreferenceManager
+from common.llm.groq_rate_limiter import is_daily_budget_low
 import logging
 logger = logging.getLogger(__name__)
 # -------------------------------------------------
@@ -255,7 +256,7 @@ def handle_chat_intent(
                 logger.info(f"   - Performance Update Result: {performance_update_result}")
             
             # Update session summary in background (every 5 messages, using last 5)
-            if chat_session_id:
+            if chat_session_id and not is_daily_budget_low(threshold=10000):
                 from student.services.conversation_summarizer import update_session_summary
                 session_conversations = conversation_manager.get_conversations_by_chat_session(
                     student_id=payload.student_id,
@@ -276,7 +277,10 @@ def handle_chat_intent(
                 else:
                     logger.info(f"⏭️ Skipping session summary ({len(session_conversations)} messages, updating every 5)")
             else:
-                logger.info("⚠️ Skipping session summary update - no chat_session_id")
+                if not chat_session_id:
+                    logger.info("⚠️ Skipping session summary update - no chat_session_id")
+                else:
+                    logger.info("⏭️ Skipping session summary: low token budget")
             
             # Update student profile with new preferences (moved to background)
             try:
