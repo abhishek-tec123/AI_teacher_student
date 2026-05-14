@@ -73,12 +73,13 @@ async def retrieve_chunks_with_shared_knowledge_async(
     if cached_response:
         logger.info(f"[ResponseCache] Returning cached response (repeat #{cached_response['repeat_count']})")
         result = {
-            "response": cached_response['response'], 
+            "response": cached_response['response'],
             "quality_scores": cached_response['quality_scores'],
             "sources": [],
             "source_summary": [],
             "from_cache": True,
-            "repeat_count": cached_response['repeat_count']
+            "repeat_count": cached_response['repeat_count'],
+            "chunk_context": "",
         }
         _cache_vector_results(cache_key, result)
         return result
@@ -182,6 +183,7 @@ async def retrieve_chunks_with_shared_knowledge_async(
     if not filtered_agent_results and not filtered_shared_results:
         logger.error("🚫 NO RELEVANT CONTENT FOUND: No chunks from agent or shared documents met threshold requirements. LLM call BLOCKED.")
         result = _build_safe_out_of_scope_response(query, "no_relevant_content")
+        result["chunk_context"] = ""
         _cache_vector_results(cache_key, result)
         return result
     
@@ -262,7 +264,8 @@ async def retrieve_chunks_with_shared_knowledge_async(
         "sources": sources_info,
         "source_summary": [f"{src['type']}: {src['name']} ({src['results_count']} chunks)" for src in sources_info],
         "chunks_used": len(all_results),
-        "from_cache": False
+        "from_cache": False,
+        "chunk_context": result_string,
     }
     
     # Cache the result

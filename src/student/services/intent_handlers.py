@@ -4,7 +4,7 @@ from student.services.learning_progress import (
     normalize_student_preference,
     update_progress_and_regression,
 )
-from student.agents.main_agent import diagnosis_chat
+from student.agents.main_agent import diagnosis_chat, detect_deep_dive_intent
 from student.agents.quiz_generator import generate_quiz_from_history
 from student.agents.study_plan import generate_study_plan_with_subtopics
 from student.agents.evaluation_agent import evaluate_response
@@ -65,13 +65,57 @@ def handle_chat_intent(
     # -----------------------------------------
     # Get subject_agent_id for agent introduction
     subject_agent_id = get_dynamic_agent_id_for_subject(student_manager, payload.student_id, payload.subject)
-    
+
+    # Detect deep-dive intent
+    last_query = None
+    last_response = None
+    if context:
+        last_turn = context[-1]
+        if isinstance(last_turn, dict):
+            last_query = last_turn.get("query", "")
+            last_response_data = last_turn.get("response", "")
+            if isinstance(last_response_data, dict):
+                last_response = last_response_data.get("response", "")
+            else:
+                last_response = last_response_data
+
+    deep_dive_check = detect_deep_dive_intent(payload.query, last_query=last_query, last_response=last_response)
+    is_deep_dive = deep_dive_check["is_deep_dive"]
+    deep_dive_topic = deep_dive_check["deep_dive_topic"]
+
+    chunk_context = None
+    deep_dive_count = 0
+    if is_deep_dive:
+        logger.info(f"🔍 Deep-dive detected: topic='{deep_dive_topic}'")
+        conversation_manager = ConversationManager()
+        last_convo = conversation_manager.get_last_conversation_with_data(
+            student_id=payload.student_id,
+            subject=payload.subject,
+            chat_session_id=chat_session_id,
+        )
+        if last_convo:
+            chunk_context = last_convo.get("additional_data", {}).get("chunk_context", "")
+            if chunk_context:
+                logger.info(f"🔍 Reusing chunk_context from conversation {last_convo.get('_id')}")
+                # Compute deep-dive count from previous conversation
+                if last_convo.get("additional_data", {}).get("is_deep_dive"):
+                    deep_dive_count = last_convo.get("additional_data", {}).get("deep_dive_count", 0) + 1
+                else:
+                    deep_dive_count = 1
+                logger.info(f"🔍 Deep-dive count set to: {deep_dive_count}")
+            else:
+                logger.info("⚠️ Deep-dive detected but no chunk_context found in last conversation")
+                is_deep_dive = False
+        else:
+            logger.info("⚠️ Deep-dive detected but no previous conversation found")
+            is_deep_dive = False
+
     # Prepare academic history
     history_context = [
         f"Q: {turn['query']}\nA: {turn['response']}"
         for turn in context
     ]
-    
+
     chat = diagnosis_chat(
         student_agent,
         payload.query,
@@ -80,18 +124,32 @@ def handle_chat_intent(
         profile,
         context=history_context,
         subject_agent_id=subject_agent_id,
-        language=detected_language
+        language=detected_language,
+        is_deep_dive=is_deep_dive,
+        deep_dive_topic=deep_dive_topic,
+        chunk_context=chunk_context,
+        deep_dive_count=deep_dive_count,
     )
 
     response = chat["response"]
     confusion_type = chat.get("confusion_type")
     rl_metadata = chat.get("rl_metadata", {})
+    result_chunk_context = chat.get("chunk_context", chunk_context)
 
     # -----------------------------------------
     # STORE CONVERSATION IMMEDIATELY for conversation_id
     # -----------------------------------------
     conversation_manager = ConversationManager()
-    
+
+    # Build additional_data including chunk_context for future deep-dives
+    additional_data = {}
+    if result_chunk_context:
+        additional_data["chunk_context"] = result_chunk_context
+    if is_deep_dive:
+        additional_data["is_deep_dive"] = True
+        additional_data["deep_dive_count"] = deep_dive_count
+        additional_data["deep_dive_topic"] = deep_dive_topic
+
     # Store conversation immediately to get conversation_id
     conversation_id = conversation_manager.add_conversation(
         student_id=payload.student_id,
@@ -101,7 +159,7 @@ def handle_chat_intent(
         feedback="neutral",  # Default feedback
         confusion_type=confusion_type or "NO_CONFUSION",
         evaluation=None,
-        additional_data={},
+        additional_data=additional_data,
         chat_session_id=chat_session_id  # Add chat_session_id
     )
     

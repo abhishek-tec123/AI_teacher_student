@@ -181,6 +181,102 @@ def detect_intent_and_topic(query: str, current_subject: str = None) -> dict:
 
 
 # =====================================================
+# 🔍 DEEP-DIVE INTENT DETECTION
+# =====================================================
+
+_DEEP_DIVE_KEYWORDS = [
+    "explain more", "go deeper", "tell me more", "elaborate",
+    "expand on", "in more detail", "can you clarify", "i don't understand",
+    "make it clearer", "why is that", "how does that work", "more detail",
+    "deeper explanation", "can you break it down further", "in depth",
+    "more about", "explain further", "clarify", "detailed explanation",
+    "step by step", "more depth", "simplify", "i am confused",
+    "don't understand", "not clear", "can you explain again"
+]
+
+_DEEP_DIVE_SHORT_FOLLOWUPS = {
+    "more", "deeper", "clarify", "again", "detail", "explain",
+    "how", "why", "what", "elaborate", "expand", "further",
+    "simplify", "confused", "unclear", "examples", "example"
+}
+
+
+def _extract_sub_topic(query: str) -> str or None:
+    """Extract a specific sub-topic from follow-up phrases like 'more about X'."""
+    q = query.lower().strip()
+    patterns = [
+        r"more about\s+(.+)",
+        r"go deeper on\s+(.+)",
+        r"tell me more about\s+(.+)",
+        r"elaborate on\s+(.+)",
+        r"focus on\s+(.+)",
+        r"what about\s+(.+)",
+        r"explain\s+(.+)\s+in detail",
+        r"explain\s+(.+)\s+more",
+        r"explain more about\s+(.+)",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, q)
+        if match:
+            topic = match.group(1).strip().rstrip("?.")
+            # Validate: must be at least 1 word and at most 6 words
+            words = topic.split()
+            if 1 <= len(words) <= 6:
+                return topic
+    return None
+
+
+def detect_deep_dive_intent(query: str, last_query: str = None, last_response: str = None) -> dict:
+    """
+    Detect if the student wants a deeper explanation about the previous response.
+
+    Returns:
+        {
+            "is_deep_dive": bool,
+            "deep_dive_topic": str or None,
+        }
+    """
+    q = query.lower().strip()
+
+    # Direct keyword match
+    has_keyword = any(kw in q for kw in _DEEP_DIVE_KEYWORDS)
+
+    # Short follow-up (single word or very short phrase) when there is a last topic
+    is_short_followup = (
+        last_query is not None
+        and len(q.split()) <= 3
+        and any(word in q for word in _DEEP_DIVE_SHORT_FOLLOWUPS)
+    )
+
+    # Vague follow-up referencing previous topic (pronouns)
+    vague_pronouns = ["it", "this", "that", "the above", "the topic"]
+    is_vague_reference = (
+        last_query is not None
+        and any(pronoun in q for pronoun in vague_pronouns)
+        and len(q.split()) <= 6
+    )
+
+    is_deep_dive = has_keyword or is_short_followup or is_vague_reference
+
+    # Infer deep-dive topic
+    deep_dive_topic = None
+    if is_deep_dive:
+        # Try to extract a specific sub-topic from the query first
+        extracted_topic = _extract_sub_topic(query)
+        if extracted_topic:
+            deep_dive_topic = extracted_topic
+        elif last_query:
+            deep_dive_topic = last_query.strip()
+        else:
+            deep_dive_topic = query.strip()
+
+    return {
+        "is_deep_dive": is_deep_dive,
+        "deep_dive_topic": deep_dive_topic,
+    }
+
+
+# =====================================================
 # 🛡 SAFE JSON LOADER
 # =====================================================
 
@@ -264,13 +360,21 @@ def diagnosis_chat(
     student_profile,
     context=None,
     subject_agent_id=None,
-    language=None
+    language=None,
+    is_deep_dive=False,
+    deep_dive_topic=None,
+    chunk_context=None,
+    deep_dive_count=0,
 ):
     """
     Preference-aware, session-aware teacher response
-    
+
     Args:
         language: Response language ('english', 'hindi', 'hinglish' or None for auto-detect)
+        is_deep_dive: If True, bypass retrieval and reuse stored chunk_context
+        deep_dive_topic: Topic string for deep-dive prompt instructions
+        chunk_context: Pre-built chunk context string from previous turn (for deep-dive)
+        deep_dive_count: Number of consecutive deep-dives so far (0 = first/normal)
     """
     # Use provided language or default to english
     detected_language = language or "english"
@@ -280,26 +384,27 @@ def diagnosis_chat(
     student_profile["last_detected_language"] = detected_language
 
     # -----------------------------
-    # 🚀 RESPONSE CACHE: Check for cached response first
+    # 🚀 RESPONSE CACHE: Check for cached response first (skip for deep-dive)
     # -----------------------------
-    cached_response = get_cached_response(query, subject, student_profile, language=detected_language)
-    if cached_response:
-        return {
-            "response": cached_response,
-            "confusion_type": "NO_CONFUSION",  # Cached responses assumed non-confused
-            "rl_metadata": {
-                "trajectory": ["cached_response"],
-                "optimized_query": query,
-                "top_k": 10,
-                "cache_hit": True
-            },
-            "detected_language": detected_language,  # Include detected language
-            "debug_info": {
-                "cache_hit": True,
-                "response_time": "cached",
-                "language": detected_language
+    if not is_deep_dive:
+        cached_response = get_cached_response(query, subject, student_profile, language=detected_language)
+        if cached_response:
+            return {
+                "response": cached_response,
+                "confusion_type": "NO_CONFUSION",  # Cached responses assumed non-confused
+                "rl_metadata": {
+                    "trajectory": ["cached_response"],
+                    "optimized_query": query,
+                    "top_k": 10,
+                    "cache_hit": True
+                },
+                "detected_language": detected_language,  # Include detected language
+                "debug_info": {
+                    "cache_hit": True,
+                    "response_time": "cached",
+                    "language": detected_language
+                }
             }
-        }
 
     # -----------------------------
     # Get global RAG settings for debug info
@@ -307,10 +412,14 @@ def diagnosis_chat(
     global_rag_settings = get_global_rag_settings()
 
     # -----------------------------
-    # Diagnose confusion
+    # Diagnose confusion (skip for deep-dive)
     # -----------------------------
-    diagnosis = diagnose_student_confusion(query, subject, class_name)
-    confusion_type = diagnosis.get("confusion_type", "NO_CONFUSION")
+    if is_deep_dive:
+        confusion_type = "NO_CONFUSION"
+        diagnosis = {"confusion_type": "NO_CONFUSION", "reason": "", "teaching_strategy": ""}
+    else:
+        diagnosis = diagnose_student_confusion(query, subject, class_name)
+        confusion_type = diagnosis.get("confusion_type", "NO_CONFUSION")
 
     # -----------------------------
     # Get agent metadata for introduction
@@ -334,11 +443,11 @@ def diagnosis_chat(
     # -----------------------------
     session_history_text = ""
     personal_info_summary = ""
-    
+
     if context:
         # Limit to last 5 turns for the teacher's final prompt
         limited_context = context[-5:]
-        
+
         # Extract personal information for easy access
         personal_info = []
         for turn in limited_context:
@@ -350,18 +459,18 @@ def diagnosis_chat(
                     response = response_data.get('response', '')
                 else:
                     response = response_data
-                
+
                 # Look for personal information sharing
                 if any(phrase in query_text for phrase in ['my name is', 'i am', 'i\'m', 'my favorite', 'i like', 'i dislike']):
                     personal_info.append(f"Student shared: {turn.get('query','')}")
-                
+
                 session_history_text += (
                     f"Previous Q: {turn.get('query','')}\n"
                     f"Previous A: {response}\n"
                 )
             elif isinstance(turn, str):
                 session_history_text += f"{turn}\n"
-        
+
         # Add personal info summary at the beginning for emphasis
         if personal_info:
             personal_info_summary = "\nIMPORTANT PERSONAL INFORMATION SHARED BY STUDENT:\n" + "\n".join(personal_info) + "\n\n"
@@ -372,34 +481,38 @@ def diagnosis_chat(
     full_context = personal_info_summary + session_history_text
 
     # -----------------------------
-    # RL-based Query Optimization
+    # RL-based Query Optimization (skip for deep-dive)
     # -----------------------------
-    optimizer = RLOptimizer()
-    state = optimizer.define_state(query=query, context_chunks=[], student_profile=student_profile)
-    top_k = 10
-    
-    # Small RL loop to refine query/retrieval (max 2 steps for latency)
-    for _ in range(2):
-        action = optimizer.select_action(state)
-        state["previous_actions"].append(action)
-        
-        if action == "rewrite_query":
-            # Only pass the last 2 turns of context for rewriting to avoid "sticky topics"
-            recent_context = ""
-            if context:
-                last_turns = context[-2:]
-                for turn in last_turns:
-                    if isinstance(turn, dict):
-                        recent_context += f"Q: {turn.get('query','')}\nA: {turn.get('response','')}\n"
-                    elif isinstance(turn, str):
-                        recent_context += f"{turn}\n"
-            
-            state["current_query"] = optimizer.rewrite_query(state["current_query"], context_text=recent_context)
-        elif action == "expand_context":
-            top_k += 5
-        elif action == "generate_response":
-            break
-            
+    if is_deep_dive:
+        top_k = 10
+        state = {"current_query": query, "previous_actions": ["deep_dive_skip_rl"]}
+    else:
+        optimizer = RLOptimizer()
+        state = optimizer.define_state(query=query, context_chunks=[], student_profile=student_profile)
+        top_k = 10
+
+        # Small RL loop to refine query/retrieval (max 2 steps for latency)
+        for _ in range(2):
+            action = optimizer.select_action(state)
+            state["previous_actions"].append(action)
+
+            if action == "rewrite_query":
+                # Only pass the last 2 turns of context for rewriting to avoid "sticky topics"
+                recent_context = ""
+                if context:
+                    last_turns = context[-2:]
+                    for turn in last_turns:
+                        if isinstance(turn, dict):
+                            recent_context += f"Q: {turn.get('query','')}\nA: {turn.get('response','')}\n"
+                        elif isinstance(turn, str):
+                            recent_context += f"{turn}\n"
+
+                state["current_query"] = optimizer.rewrite_query(state["current_query"], context_text=recent_context)
+            elif action == "expand_context":
+                top_k += 5
+            elif action == "generate_response":
+                break
+
     # Final prompt still uses session context and diagnosis
     full_prompt = build_teacher_prompt(
         student_profile=student_profile,
@@ -410,27 +523,45 @@ def diagnosis_chat(
         current_query=query,
         agent_metadata=agent_metadata,
         base_prompt=get_base_prompt(),  # Use the cached base prompt
-        language=detected_language  # Pass detected language
+        language=detected_language,  # Pass detected language
+        is_deep_dive=is_deep_dive,
+        deep_dive_topic=deep_dive_topic,
+        deep_dive_count=deep_dive_count,
     )
 
     full_prompt += f"\nOriginal Student Question:\n{query}\n"
-    full_prompt += f"\nSearch Query (RL Optimized):\n{state['current_query']}\n"
+    if not is_deep_dive:
+        full_prompt += f"\nSearch Query (RL Optimized):\n{state['current_query']}\n"
 
     # -----------------------------
-    # Ask LLM (with RL-optimized parameters)
+    # Ask LLM (with RL-optimized parameters) or deep-dive direct call
     # -----------------------------
-    result = student_agent.ask(
-        query=full_prompt,
-        class_name=class_name,
-        subject=subject,
-        student_profile=student_profile,
-        subject_agent_id=subject_agent_id,  # Pass for shared knowledge
-        top_k=top_k
-    )
+    if is_deep_dive and chunk_context:
+        logger.info("🔍 DEEP-DIVE MODE: Bypassing retriever, reusing stored chunk context")
+        result = student_agent.ask(
+            query=full_prompt,
+            class_name=class_name,
+            subject=subject,
+            student_profile=student_profile,
+            subject_agent_id=subject_agent_id,
+            top_k=top_k,
+            is_deep_dive=True,
+            chunk_context=chunk_context,
+        )
+    else:
+        result = student_agent.ask(
+            query=full_prompt,
+            class_name=class_name,
+            subject=subject,
+            student_profile=student_profile,
+            subject_agent_id=subject_agent_id,  # Pass for shared knowledge
+            top_k=top_k
+        )
 
     if isinstance(result, dict):
         response = result.get("response", "")
         quality_scores = result.get("quality_scores", {})
+        chunk_context = result.get("chunk_context", chunk_context)
     else:
         response = result or ""
         quality_scores = {}
@@ -445,9 +576,10 @@ def diagnosis_chat(
     }
 
     # -----------------------------
-    # 🚀 CACHE RESPONSE for future speed
+    # 🚀 CACHE RESPONSE for future speed (skip for deep-dive)
     # -----------------------------
-    cache_response(query, subject, student_profile, response, language=detected_language)
+    if not is_deep_dive:
+        cache_response(query, subject, student_profile, response, language=detected_language)
 
     return {
         "response": response,
@@ -456,6 +588,8 @@ def diagnosis_chat(
         "quality_scores": quality_scores,
         "rl_metadata": rl_metadata,
         "detected_language": detected_language,  # Include detected language in response
+        "chunk_context": chunk_context,
+        "deep_dive_count": deep_dive_count,
         "debug_info": {
             "actual_prompt": full_prompt,
             "prompt_length": len(full_prompt),

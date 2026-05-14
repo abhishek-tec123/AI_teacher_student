@@ -33,7 +33,7 @@ def _fallback_sync_search(
     """
     Fallback synchronous search implementation.
     """
-    _err = lambda msg: {"response": msg, "quality_scores": {}, "sources": []}
+    _err = lambda msg: {"response": msg, "quality_scores": {}, "sources": [], "chunk_context": ""}
 
     if not embedding_model:
         return _err("No embedding model provided.")
@@ -47,11 +47,12 @@ def _fallback_sync_search(
     
     if cached_response:
         return {
-            "response": cached_response['response'], 
+            "response": cached_response['response'],
             "quality_scores": cached_response['quality_scores'],
             "sources": [],
             "from_cache": True,
-            "repeat_count": cached_response['repeat_count']
+            "repeat_count": cached_response['repeat_count'],
+            "chunk_context": ""
         }
 
     # Extract core question and embed
@@ -193,6 +194,7 @@ def _fallback_sync_search(
     if not filtered_agent_results and not filtered_shared_results:
         logger.error("🚫 NO RELEVANT CONTENT FOUND (sync): No chunks from agent or shared documents met threshold requirements. LLM call BLOCKED.")
         result = _build_safe_out_of_scope_response(query, "no_relevant_content")
+        result["chunk_context"] = ""
         _cache_vector_results(cache_key, result)
         return result
     
@@ -249,7 +251,8 @@ def _fallback_sync_search(
         "sources": sources_info,
         "source_summary": [f"{src['type']}: {src['name']} ({src['results_count']} chunks)" for src in sources_info],
         "chunks_used": len(all_results),
-        "from_cache": False
+        "from_cache": False,
+        "chunk_context": result_string,
     }
     
     # Cache the result

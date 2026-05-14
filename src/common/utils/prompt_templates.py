@@ -216,11 +216,14 @@ def build_teacher_prompt(
     current_query: str = "Current Question",
     agent_metadata: dict = None,
     base_prompt: str = None,
-    language: str = "english"
+    language: str = "english",
+    is_deep_dive: bool = False,
+    deep_dive_topic: str = None,
+    deep_dive_count: int = 0,
 ) -> str:
     """
     Build complete teacher prompt with all components.
-    
+
     Args:
         student_profile: Student preferences and learning profile
         class_name: Class/grade level
@@ -231,7 +234,10 @@ def build_teacher_prompt(
         agent_metadata: Agent metadata for introductions and global settings (optional)
         base_prompt: Custom base prompt (optional, defaults to BASE_TEACHER_PROMPT)
         language: Response language - "english", "hindi", or "hinglish"
-    
+        is_deep_dive: If True, append deep-dive instructions
+        deep_dive_topic: Topic for deep-dive focus
+        deep_dive_count: Number of consecutive deep-dives (0 = first/normal)
+
     Returns:
         Complete teacher prompt string
     """
@@ -364,7 +370,15 @@ Avoid robotic formatting.
         prompt += f"\nPrevious conversation (Last 5 turns for context only):\n{session_context}\n"
 
     # Response length control (simplified: 3-level system - short, medium, very long)
-    if response_length == "short":
+    if is_deep_dive:
+        # Adaptive length based on deep-dive count
+        if deep_dive_count == 1:
+            prompt += "\nProvide a MUCH LONGER and MORE DETAILED response than before (4+ paragraphs). Include multiple examples, detailed breakdowns, and broader context.\n"
+        elif deep_dive_count == 2:
+            prompt += "\nProvide a VERY LONG and DETAILED response (6+ paragraphs). Go deep using your knowledge. Bring genuinely NEW insights and depth.\n"
+        else:
+            prompt += "\nProvide a DETAILED response (4+ paragraphs) with new angles and insights. Keep it fresh with minor changes in angle.\n"
+    elif response_length == "short":
         prompt += "\nProvide SHORT response (3-4 paragraphs). Key concept and basic explanation with minimal examples.\n"
     elif response_length == "medium":
         prompt += "\nProvide MEDIUM response (2-3 paragraphs). Main concept, explanation, and one clear example.\n"
@@ -372,6 +386,36 @@ Avoid robotic formatting.
         prompt += "\nProvide VERY LONG response (5+ paragraphs). Comprehensive explanation, multiple examples, context, and deeper insights.\n"
     else:
         prompt += "\nProvide VERY LONG response (5+ paragraphs). Comprehensive explanation, multiple examples, context, and deeper insights.\n"
+
+    # Deep-dive instructions
+    if is_deep_dive:
+        topic = deep_dive_topic or current_query
+        if deep_dive_count == 1:
+            prompt += f"""
+DEEP-DIVE MODE (Level 1):
+- The student wants a deeper, more detailed explanation about: {topic}.
+- Use the retrieved chunks as your factual anchor. The facts in the chunks are non-negotiable.
+- Draw FREELY on your teaching expertise to add analogies, step-by-step breakdowns, real-world connections, and deeper conceptual clarity.
+- Your goal is to make the student truly understand at a deeper level, not to restate the same surface explanation.
+- Keep the tone encouraging and appropriate for the student's level.
+"""
+        elif deep_dive_count == 2:
+            prompt += f"""
+DEEP-DIVE MODE (Level 2):
+- The student wants an even deeper explanation about: {topic}.
+- CRITICAL: You have already explained this once before. Do NOT repeat the same points, examples, or analogies.
+- Try a completely DIFFERENT teaching angle: use a new analogy, connect to a different real-world domain, or explain the "why" behind the mechanisms.
+- The chunks are still your factual anchor; do not contradict them.
+- Bring genuinely NEW insights and depth that were not in your previous explanation.
+"""
+        else:
+            prompt += f"""
+DEEP-DIVE MODE (Level 3):
+- The student has asked for even more depth about: {topic}.
+- CRITICAL: Do NOT repeat the same explanations or examples you have already given. Keep it fresh with minor changes in angle.
+- Use a slightly different teaching approach: focus on a narrower sub-aspect, use a fresh analogy, or connect to a new real-world example.
+- Continue to draw on your teaching expertise alongside the chunk facts. Keep going deep.
+"""
 
     return prompt.strip()
 

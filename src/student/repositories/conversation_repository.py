@@ -207,6 +207,73 @@ class ConversationManager:
             for h in history
         ]
     
+    def get_last_conversation_with_data(
+        self,
+        student_id: str,
+        subject: str,
+        chat_session_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Get the most recent conversation for a student/subject, including additional_data.
+
+        Args:
+            student_id: Student identifier
+            subject: Subject/agent name
+            chat_session_id: Optional chat session filter
+
+        Returns:
+            Last conversation document with all fields including additional_data, or None
+        """
+        doc = self.students.find_one(
+            {"student_id": student_id},
+            {f"conversation_history.{subject}": 1}
+        )
+
+        if not doc:
+            return None
+
+        history = doc.get("conversation_history", {}).get(subject, [])
+
+        # Sort by latest first
+        history = sorted(
+            history,
+            key=lambda x: x.get("timestamp", datetime.min),
+            reverse=True
+        )
+
+        if not history:
+            return None
+
+        last = history[0]
+
+        # Filter by chat_session_id if provided
+        if chat_session_id and last.get("chat_session_id") != chat_session_id:
+            # Find the most recent one matching the chat_session_id
+            matching = [h for h in history if h.get("chat_session_id") == chat_session_id]
+            if not matching:
+                return None
+            last = matching[0]
+
+        # Serialize Mongo types while preserving additional_data
+        result = {
+            "_id": str(last["_id"]),
+            "query": last.get("query", ""),
+            "response": last.get("response", ""),
+            "feedback": last.get("feedback", "neutral"),
+            "confusion_type": last.get("confusion_type", "NO_CONFUSION"),
+            "timestamp": last["timestamp"].isoformat() if last.get("timestamp") else None,
+            "additional_data": {},
+        }
+
+        # Collect all fields that are not part of the base schema into additional_data
+        base_keys = {"_id", "conversation_id", "query", "response", "feedback", "confusion_type",
+                     "timestamp", "evaluation", "quality_scores", "agent_id", "chat_session_id"}
+        for key, value in last.items():
+            if key not in base_keys:
+                result["additional_data"][key] = value
+
+        return result
+
     def get_chat_history_by_agent(
         self,
         student_id: str,
