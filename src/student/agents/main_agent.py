@@ -542,12 +542,10 @@ def diagnosis_chat(
 
     if skip_rl:
         top_k = 5
-        skip_reason = "deep_dive" if is_deep_dive else ("low_budget" if budget_low else "short_query")
+        skip_reason = "deep_dive" if is_deep_dive else "low_budget"
         state = {"current_query": query, "previous_actions": [f"skip_rl:{skip_reason}"]}
         if budget_low:
             logger.info("⏭️ RL rewrite skipped: daily token budget low")
-        elif query_word_count < 5:
-            logger.info("⏭️ RL rewrite skipped: query too short")
     else:
         optimizer = RLOptimizer()
         state = optimizer.define_state(query=query, context_chunks=[], student_profile=student_profile)
