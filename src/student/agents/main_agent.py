@@ -423,6 +423,7 @@ def diagnosis_chat(
     deep_dive_topic=None,
     chunk_context=None,
     deep_dive_count=0,
+    is_practice=False,
 ):
     """
     Preference-aware, session-aware teacher response
@@ -433,6 +434,7 @@ def diagnosis_chat(
         deep_dive_topic: Topic string for deep-dive prompt instructions
         chunk_context: Pre-built chunk context string from previous turn (for deep-dive)
         deep_dive_count: Number of consecutive deep-dives so far (0 = first/normal)
+        is_practice: If True, student is requesting practice problems
     """
     # Use provided language or default to english
     detected_language = language or "english"
@@ -602,6 +604,7 @@ def diagnosis_chat(
         is_deep_dive=is_deep_dive,
         deep_dive_topic=deep_dive_topic,
         deep_dive_count=deep_dive_count,
+        is_practice=is_practice,
     )
 
     full_prompt += f"\nOriginal Student Question:\n{query}\n"

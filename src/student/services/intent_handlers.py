@@ -120,6 +120,10 @@ def handle_chat_intent(
         for turn in context
     ]
 
+    # Detect if this is a practice request
+    practice_keywords = ["problem", "exercise", "practice", "solve", "test me", "task", "assignment", "activity", "sum", "example", "question"]
+    is_practice_request = any(word in payload.query.lower() for word in practice_keywords)
+
     chat = diagnosis_chat(
         student_agent,
         payload.query,
@@ -133,6 +137,7 @@ def handle_chat_intent(
         deep_dive_topic=deep_dive_topic,
         chunk_context=chunk_context,
         deep_dive_count=deep_dive_count,
+        is_practice=is_practice_request,
     )
 
     response = chat["response"]

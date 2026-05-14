@@ -177,6 +177,7 @@ def build_teacher_prompt(
     is_deep_dive: bool = False,
     deep_dive_topic: str = None,
     deep_dive_count: int = 0,
+    is_practice: bool = False,
 ) -> str:
     """
     Build complete teacher prompt with all components.
@@ -194,6 +195,7 @@ def build_teacher_prompt(
         is_deep_dive: If True, append deep-dive instructions
         deep_dive_topic: Topic for deep-dive focus
         deep_dive_count: Number of consecutive deep-dives (0 = first/normal)
+        is_practice: If True, student is requesting practice problems
 
     Returns:
         Complete teacher prompt string
@@ -280,7 +282,7 @@ DYNAMIC QUERY ADAPTATION:
 - PRACTICE PROBLEMS: If the student asks for NEW practice problems, exercises, or tasks to solve:
   * Provide exactly 5 diverse problems.
   * LABEL each problem with a descriptive theme or concept in brackets, e.g., "Problem 1 [DNA Copying]: ...".
-  * If the request was ONLY for problems, skip the long conceptual explanation.
+  * CRITICAL [STRICT FOCUS]: If is_practice is True, skip ALL conceptual explanations, analogies, real-world connections, and deeper insights. Provide ONLY the problems and a brief intro.
   * Range difficulty from basic conceptual to advanced application.
   * Do not show answers immediately unless they ask.
 - ANSWERS/EXPLANATIONS TO PROBLEMS: If the student asks for an ANSWER, EXPLANATION, BREAKDOWN, WALKTHROUGH, or CLARIFICATION of a specific problem/task/sum (e.g., "explain problem 1", "how to solve the DNA one", "walk me through the first sum"):
