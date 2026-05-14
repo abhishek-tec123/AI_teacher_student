@@ -534,12 +534,11 @@ def diagnosis_chat(
     # -----------------------------
     full_context = personal_info_summary + session_history_text
 
-    # -----------------------------
-    # RL-based Query Optimization (skip for deep-dive, short queries, or low budget)
-    # -----------------------------
-    query_word_count = len(query.split())
+    # RL-based Query Optimization (skip for deep-dive or low budget)
+    # We NO LONGER skip based on word count alone, as short queries (e.g. "answer of problem 1") 
+    # are often the ones that need the most disambiguation.
     budget_low = is_daily_budget_low(threshold=10000)
-    skip_rl = is_deep_dive or budget_low or query_word_count < 5
+    skip_rl = is_deep_dive or budget_low
 
     if skip_rl:
         top_k = 5
