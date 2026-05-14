@@ -560,15 +560,29 @@ def diagnosis_chat(
             if action == "rewrite_query":
                 # Only pass the last 2 turns of context for rewriting to avoid "sticky topics"
                 recent_context = ""
+                last_topic = ""
                 if context:
                     last_turns = context[-2:]
                     for turn in last_turns:
                         if isinstance(turn, dict):
-                            recent_context += f"Q: {turn.get('query','')}\nA: {turn.get('response','')}\n"
-                        elif isinstance(turn, str):
-                            recent_context += f"{turn}\n"
+                            q_text = turn.get('query','')
+                            r_text = turn.get('response','')
+                            if isinstance(r_text, dict): r_text = r_text.get('response', '')
+                            recent_context += f"Q: {q_text}\nA: {r_text}\n"
+                            
+                            # Extract topic for additional bias
+                            topic_match = re.search(r"Topic: \*\*(.+?)\*\*", str(r_text))
+                            if topic_match:
+                                last_topic = topic_match.group(1)
 
-                state["current_query"] = optimizer.rewrite_query(state["current_query"], context_text=recent_context)
+                # Use a larger context window (2000 chars) for better disambiguation
+                state["current_query"] = optimizer.rewrite_query(state["current_query"], context_text=recent_context[:2000])
+                
+                # If the rewriter failed to include the last topic and the query is vague, force it
+                if last_topic and any(vague in state["current_query"].lower() for vague in ["problem", "it", "this", "that", "the first", "the second", "explain more"]):
+                    if last_topic.lower() not in state["current_query"].lower():
+                        state["current_query"] = f"{state['current_query']} related to {last_topic}"
+                        logger.info(f"📍 Topic Bias applied: {state['current_query']}")
             elif action == "expand_context":
                 top_k = min(top_k + 2, 5)
             elif action == "generate_response":
