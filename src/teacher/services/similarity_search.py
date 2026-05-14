@@ -125,10 +125,11 @@ def retrieve_chunk_for_query_send_to_llm(
     if cached_response:
         logger.info(f"[ResponseCache] Returning cached response (repeat #{cached_response['repeat_count']})")
         return {
-            "response": cached_response['response'], 
+            "response": cached_response['response'],
             "quality_scores": cached_response['quality_scores'],
             "from_cache": True,
-            "repeat_count": cached_response['repeat_count']
+            "repeat_count": cached_response['repeat_count'],
+            "chunk_context": "",
         }
 
     # -----------------------------
@@ -185,7 +186,7 @@ def retrieve_chunk_for_query_send_to_llm(
             retrieved_chunks=[],
             context_string="",
         )
-        return {"response": safe_msg, "quality_scores": quality_scores, "content_restriction": "no_chunks_found"}
+        return {"response": safe_msg, "quality_scores": quality_scores, "content_restriction": "no_chunks_found", "chunk_context": ""}
 
     # -----------------------------
     # LOG ALL retrieved chunks
@@ -221,7 +222,7 @@ def retrieve_chunk_for_query_send_to_llm(
             retrieved_chunks=[],
             context_string="",
         )
-        return {"response": safe_msg, "quality_scores": quality_scores, "content_restriction": "below_threshold"}
+        return {"response": safe_msg, "quality_scores": quality_scores, "content_restriction": "below_threshold", "chunk_context": ""}
 
     # -----------------------------
     # LOG accepted chunks with content
@@ -274,4 +275,10 @@ def retrieve_chunk_for_query_send_to_llm(
     # -----------------------------
     response_cache.cache_response(query, response_text, quality_scores, student_id)
 
-    return {"response": response_text, "quality_scores": quality_scores, "from_cache": False, "content_restriction": "none"}
+    return {
+        "response": response_text,
+        "quality_scores": quality_scores,
+        "from_cache": False,
+        "content_restriction": "none",
+        "chunk_context": result_string,
+    }
