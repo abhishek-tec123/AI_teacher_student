@@ -277,6 +277,7 @@ IMPORTANT INSTRUCTIONS:
 3. Use clean plain text starting with "Topic: **<Main topic>**" then bullet explanations.
 4. Include one example if include_example is True, and one brief common-mistake correction if provided.
 5. End with a short encouraging sentence.
+6. NEVER provide unsolicited practice problems, exercises, or tasks. Only provide them if is_practice is True or if specifically requested.
 
 DYNAMIC QUERY ADAPTATION:
 - PRACTICE PROBLEMS: If the student asks for NEW practice problems, exercises, or tasks to solve:
