@@ -386,13 +386,13 @@ def queryRouter(
             logger.info(f"📝 Using session summary for notes generation")
 
         # Fallback to raw history if no session summary available
+        formatted_stored_history = []
         if not session_summary_text:
             stored_history = conversation_manager.get_chat_history_by_agent(
                 student_id=payload.student_id,
                 subject=payload.subject,
                 limit=None
             )
-            formatted_stored_history = []
             for item in stored_history:
                 formatted_stored_history.append({
                     "query": item.get("query", ""),
@@ -475,13 +475,13 @@ def queryRouter(
             logger.info(f"📝 Using session summary for summary generation")
 
         # Fallback to raw history if no session summary available
+        formatted_stored_history = []
         if not session_summary_text:
             stored_history = conversation_manager.get_chat_history_by_agent(
                 student_id=payload.student_id,
                 subject=payload.subject,
                 limit=None
             )
-            formatted_stored_history = []
             for item in stored_history:
                 formatted_stored_history.append({
                     "query": item.get("query", ""),

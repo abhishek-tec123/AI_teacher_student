@@ -13,6 +13,8 @@ from common.llm.groq_rate_limiter import (
     get_rate_limiter,
     get_concurrency_limiter,
     estimate_tokens,
+    increment_daily_tokens,
+    is_daily_budget_low,
 )
 
 logger = logging.getLogger(__name__)
@@ -235,6 +237,7 @@ def sync_invoke_with_limiters(
             retry_base_delay=retry_base_delay,
         )
     _record_llm_call(_model_name, estimated_total)
+    increment_daily_tokens(estimated_total)
     return result
 
 
@@ -295,4 +298,5 @@ async def async_invoke_with_limiters(
             retry_base_delay=retry_base_delay,
         )
     _record_llm_call(_model_name, estimated_total)
+    increment_daily_tokens(estimated_total)
     return result
