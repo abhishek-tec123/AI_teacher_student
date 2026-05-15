@@ -26,30 +26,27 @@ VECTOR_INDEX_NAME = "vector_index"
 VECTOR_PATH = "embedding.vector"
 def _build_safe_out_of_scope_response(query: str, restriction_reason: str):
     """
-    Central helper to build a safe, curriculum-bound response when no
-    relevant RAG content is available or when content restrictions apply.
+    Central helper for when no relevant RAG content is available.
+    Instead of sending a rigid fallback message to the student, we return
+    an empty response with a flag so upstream can call the LLM with general knowledge.
     """
-    safe_msg = (
-        "I'm not able to answer this question from the available learning materials. "
-        "This teaching assistant can only answer using your curriculum content and teacher-provided documents. "
-        "Please try asking with terms from your study materials or consult your teacher for help."
-    )
     quality_scores = compute_quality_scores(
         query=query,
-        response_text=safe_msg,
+        response_text="",
         retrieved_chunks=[],
         context_string="",
     )
     # Tag that this was blocked by RAG policy, not hallucinated
     quality_scores["content_restriction"] = restriction_reason
     return {
-        "response": safe_msg,
+        "response": "",
         "quality_scores": quality_scores,
         "sources": [],
         "source_summary": [],
         "chunks_used": 0,
         "from_cache": False,
         "content_restriction": restriction_reason,
+        "proceed_with_general_knowledge": True,
     }
 
 # -----------------------------

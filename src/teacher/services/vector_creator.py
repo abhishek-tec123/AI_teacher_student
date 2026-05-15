@@ -112,6 +112,12 @@ async def create_vectors_service(
     subject_agent_id: str | None = None,
     global_prompt_enabled: bool = False,
     global_rag_enabled: bool = False,
+    persona_vibe: Optional[str] = None,
+    greeting_style: Optional[str] = None,
+    closing_style: Optional[str] = None,
+    response_format_rules: Optional[str] = None,
+    emoji_policy: Optional[str] = None,
+    example_policy: Optional[str] = None,
 ):
     db_name, collection_name = map_to_db_and_collection(class_, subject)
 
@@ -215,10 +221,22 @@ async def create_vectors_service(
     # Now that we have the final agent_id, update storage paths if needed
     # (This is already done above since we save files immediately now)
 
-    # Add global settings to agent metadata
+    # Add persona fields to agent metadata
     if agent_metadata is None:
         agent_metadata = {}
-    
+
+    for key, value in {
+        "persona_vibe": persona_vibe,
+        "greeting_style": greeting_style,
+        "closing_style": closing_style,
+        "response_format_rules": response_format_rules,
+        "emoji_policy": emoji_policy,
+        "example_policy": example_policy,
+    }.items():
+        if value is not None:
+            agent_metadata[key] = value
+
+    # Add global settings to agent metadata
     agent_metadata.update({
         "global_prompt_enabled": global_prompt_enabled,
         "global_rag_enabled": global_rag_enabled
@@ -234,6 +252,13 @@ async def create_vectors_service(
         agent_metadata=agent_metadata,
         file_storage_paths=file_storage_paths,  # Pass storage paths
     )
+
+    # Clear cached persona so next request picks up new agent fields
+    try:
+        from common.prompts.agent_configs import clear_agent_persona_cache
+        clear_agent_persona_cache()
+    except Exception:
+        pass
 
     # Add full prompt information to response
     prompt_info = {

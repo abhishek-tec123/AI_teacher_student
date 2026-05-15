@@ -1,12 +1,15 @@
 import re
 import json
+import os
 from threading import Lock
 from student.services.conversation_summarizer import summarize_text_with_groq
 from student.agents.study_plan import extract_topic_from_sentence
 from student.agents.rl_optimizer import RLOptimizer
 from admin.services.global_settings_service import get_global_rag_settings
 from common.utils.prompt_templates import get_base_prompt as get_template_base_prompt, build_teacher_prompt
+from common.prompts.topic_inference import infer_topic_from_history
 from common.llm.groq_rate_limiter import is_daily_budget_low
+from student.utils.chat_utils import is_greeting, is_general_chat
 
 # =====================================================
 # 🔐 IN-MEMORY PROMPT CACHE (GLOBAL, NO DB)
@@ -96,6 +99,37 @@ _WORD_NUMBERS = {
     "nineteen": 19, "twenty": 20,
 }
 
+# Mapping for ordinal words (e.g., "second question", "2nd question")
+_ORDINAL_WORDS = {
+    "first": 1, "second": 2, "third": 3, "fourth": 4, "fifth": 5,
+    "sixth": 6, "seventh": 7, "eighth": 8, "ninth": 9, "tenth": 10,
+    "1st": 1, "2nd": 2, "3rd": 3, "4th": 4, "5th": 5,
+    "6th": 6, "7th": 7, "8th": 8, "9th": 9, "10th": 10,
+}
+
+
+def _extract_question_number_from_ordinals(q: str) -> int | None:
+    """Extract question number from ordinal words like 'second question' or '2nd q'."""
+    # Pattern: ordinal near question/q (e.g., "second question", "the 2nd q")
+    for ordinal, num in _ORDINAL_WORDS.items():
+        pattern = rf"\b{re.escape(ordinal)}\b.*\b(question|q)\b|\b(question|q)\b.*\b{re.escape(ordinal)}\b"
+        if re.search(pattern, q, re.IGNORECASE):
+            return num
+
+    # Pattern: "question number two", "q number 2nd"
+    number_word_match = re.search(
+        rf"(?:question|q)\s+(?:number|no|#)?\s*(\d+|{'|'.join(_ORDINAL_WORDS.keys())})",
+        q, re.IGNORECASE
+    )
+    if number_word_match:
+        matched = number_word_match.group(1).lower()
+        if matched in _ORDINAL_WORDS:
+            return _ORDINAL_WORDS[matched]
+        if matched.isdigit():
+            return int(matched)
+
+    return None
+
 
 def _extract_num_questions(q: str) -> int:
     """Extract requested question count from a quiz query. Defaults to 3, clamps 1-20."""
@@ -135,18 +169,26 @@ def detect_intent_and_topic(query: str, current_subject: str = None) -> dict:
                 "question_number": -1,  # sentinel for "last question"
             }
 
+        # Try digit regex first (e.g., "question 2", "#3")
         q_num_match = re.search(r"(?:question|q)\s*(\d+)|#(\d+)", q)
         question_number = None
         if q_num_match:
             question_number = int(q_num_match.group(1) or q_num_match.group(2))
+        else:
+            # Fallback: try ordinal words (e.g., "second question", "2nd q")
+            question_number = _extract_question_number_from_ordinals(q)
+
         return {
             "intent": "QUIZ_EXPLAIN",
             "question_number": question_number,
         }
 
-    if any(x in q for x in ["study plan", "how to learn", "start learning"]):
-        match = re.search(r"(?:learn|study)\s+(.*)", q)
-        return {"intent": "STUDY_PLAN", "topic": match.group(1) if match else None}
+    if any(x in q for x in ["study plan", "how to learn", "start learning", "make plan", "create plan", "plan on", "plan for", "plan about"]):
+        # Try multiple patterns for topic extraction
+        match = re.search(r"(?:learn|study|plan)\s+(?:on|for|about)?\s*(.*)", q)
+        if not match:
+            match = re.search(r"(?:plan|learn|study)\s+(.*)", q)
+        return {"intent": "STUDY_PLAN", "topic": match.group(1).strip() if match else None}
 
     if any(word in q for word in ["notes", "make notes", "revision"]):
         # Check if it's a generic request or specific topic request
@@ -157,10 +199,10 @@ def detect_intent_and_topic(query: str, current_subject: str = None) -> dict:
                 "topic": extract_topic_from_sentence(query)
             }
         else:
-            # Generic request - use current subject
+            # Generic request - let _resolve_topic() infer from session history
             return {
                 "intent": "NOTES",
-                "topic": current_subject or "General"
+                "topic": None
             }
 
     if any(word in q for word in ["summary", "summarize", "give summary", "what i have learned"]):
@@ -172,10 +214,10 @@ def detect_intent_and_topic(query: str, current_subject: str = None) -> dict:
                 "topic": extract_topic_from_sentence(query)
             }
         else:
-            # Generic request - use current subject
+            # Generic request - let _resolve_topic() infer from session history
             return {
                 "intent": "SUMMARY",
-                "topic": current_subject or "General"
+                "topic": None
             }
 
     # PRACTICE / PROBLEMS check (simple rule before LLM fallback)
@@ -406,6 +448,142 @@ def get_agent_metadata(subject_agent_id: str) -> dict:
         logger.info(f"Error getting agent metadata: {e}")
         return {}
 
+
+def suggest_topic_from_agent_knowledge(
+    class_name: str,
+    subject: str,
+    subject_agent_id: str | None,
+) -> str | None:
+    """
+    Suggest a topic from agent knowledge when no chat history exists.
+    Tries agent metadata first, then falls back to a sample chunk.
+    """
+    # 1. Try agent metadata
+    try:
+        metadata = get_agent_metadata(subject_agent_id) if subject_agent_id else {}
+        for key in ("description", "subject", "agent_name"):
+            val = metadata.get(key, "").strip()
+            if val and len(val) > 2:
+                return val
+    except Exception:
+        pass
+
+    # 2. Try fetching a sample chunk from the collection
+    try:
+        from pymongo import MongoClient
+        from config.settings import settings
+
+        client = MongoClient(settings.mongodb_uri)
+        db = client[class_name]
+        collection = db[subject]
+        sample = collection.find_one(
+            {"subject_agent_id": subject_agent_id} if subject_agent_id else {},
+            {"chunk.text": 1, "document.file_name": 1}
+        )
+        client.close()
+
+        if sample:
+            text = sample.get("chunk", {}).get("text", "")
+            if text:
+                # Extract first sentence as topic hint
+                first_sentence = text.split(".")[0].strip()
+                if len(first_sentence) > 3:
+                    return first_sentence[:120]
+            file_name = sample.get("document", {}).get("file_name", "")
+            if file_name:
+                name = os.path.splitext(file_name)[0].replace("_", " ").replace("-", " ").strip()
+                if name:
+                    return name
+    except Exception:
+        pass
+
+    return None
+
+
+def get_available_topics_from_agent(
+    class_name: str,
+    subject: str,
+    subject_agent_id: str | None,
+    max_topics: int = 5,
+) -> list[str]:
+    """
+    Extract available topics from the agent's knowledge base by sampling
+    random chunks and extracting heading/topic lines.
+    """
+    topics = []
+
+    try:
+        from pymongo import MongoClient
+        from config.settings import settings
+
+        client = MongoClient(settings.mongodb_uri)
+        db = client[class_name]
+        collection = db[subject]
+
+        filter_query = {"subject_agent_id": subject_agent_id} if subject_agent_id else {}
+
+        # 1. Use $sample to pick random chunks (not just first 10)
+        pipeline = [
+            {"$match": filter_query},
+            {"$sample": {"size": 20}},
+            {"$project": {"chunk.text": 1, "document.file_name": 1}}
+        ]
+
+        sampled_docs = list(collection.aggregate(pipeline))
+
+        # Extract from random chunk texts
+        for doc in sampled_docs:
+            text = doc.get("chunk", {}).get("text", "")
+            if not text:
+                continue
+            lines = [ln.strip() for ln in text.split("\n") if ln.strip()]
+            for line in lines[:3]:  # first 3 non-empty lines
+                # Skip lines that are just numbers or page references
+                if re.fullmatch(r"\d+|\d+\.\d+|CHAPTER|Chapter|Page \d+", line, re.IGNORECASE):
+                    continue
+                # Clean up: remove trailing numbers / roman numerals
+                clean = re.sub(r"\s*\d+$|\s*[IVXivx]+$", "", line).strip()
+                if clean and len(clean) > 3 and len(clean) < 80 and clean not in topics:
+                    topics.append(clean)
+                    break
+
+            if len(topics) >= max_topics * 2:
+                break
+
+        # 2. Fallback to document file names if we got very few topics
+        if len(topics) < max_topics:
+            file_names = collection.distinct("document.file_name", filter_query)
+            for file_name in file_names:
+                if not file_name:
+                    continue
+                name = os.path.splitext(file_name)[0].replace("_", " ").replace("-", " ").strip()
+                if name and name not in topics:
+                    topics.append(name)
+                if len(topics) >= max_topics * 2:
+                    break
+
+        client.close()
+    except Exception:
+        pass
+
+    # 3. Agent metadata as last fallback
+    if not topics:
+        try:
+            metadata = get_agent_metadata(subject_agent_id) if subject_agent_id else {}
+            for key in ("agent_name", "description", "subject"):
+                val = metadata.get(key, "").strip()
+                if val and len(val) > 2 and val not in topics:
+                    topics.append(val)
+        except Exception:
+            pass
+
+    # 4. Always include the subject name itself if no other topics found
+    if not topics and subject:
+        topics.append(subject)
+
+    return topics[:max_topics]
+
+
 # =====================================================
 # �‍🏫 TEACHER CHAT (MAIN ENTRY)
 # =====================================================
@@ -537,9 +715,19 @@ def diagnosis_chat(
     # -----------------------------
     full_context = personal_info_summary + session_history_text
 
+    # Infer topic from history for vague queries
+    inferred_topic = None
+    if not is_deep_dive:
+        history_for_inference = []
+        if context:
+            for turn in context[-5:]:
+                if isinstance(turn, dict):
+                    history_for_inference.append(turn)
+        inferred_topic = infer_topic_from_history(history_for_inference, current_query=query)
+        if inferred_topic:
+            logger.info(f"📍 Inferred topic from history: '{inferred_topic}'")
+
     # RL-based Query Optimization (skip for deep-dive or low budget)
-    # We NO LONGER skip based on word count alone, as short queries (e.g. "answer of problem 1") 
-    # are often the ones that need the most disambiguation.
     budget_low = is_daily_budget_low(threshold=10000)
     skip_rl = is_deep_dive or budget_low
 
@@ -560,7 +748,6 @@ def diagnosis_chat(
             state["previous_actions"].append(action)
 
             if action == "rewrite_query":
-                # Only pass the last 2 turns of context for rewriting to avoid "sticky topics"
                 recent_context = ""
                 last_topic = ""
                 if context:
@@ -571,16 +758,11 @@ def diagnosis_chat(
                             r_text = turn.get('response','')
                             if isinstance(r_text, dict): r_text = r_text.get('response', '')
                             recent_context += f"Q: {q_text}\nA: {r_text}\n"
-                            
-                            # Extract topic for additional bias
                             topic_match = re.search(r"Topic: \*\*(.+?)\*\*", str(r_text))
                             if topic_match:
                                 last_topic = topic_match.group(1)
 
-                # Use a larger context window (2000 chars) for better disambiguation
                 state["current_query"] = optimizer.rewrite_query(state["current_query"], context_text=recent_context[:2000])
-                
-                # If the rewriter failed to include the last topic and the query is vague, force it
                 if last_topic and any(vague in state["current_query"].lower() for vague in ["problem", "it", "this", "that", "the first", "the second", "explain more"]):
                     if last_topic.lower() not in state["current_query"].lower():
                         state["current_query"] = f"{state['current_query']} related to {last_topic}"
@@ -599,12 +781,13 @@ def diagnosis_chat(
         session_context=full_context,
         current_query=query,
         agent_metadata=agent_metadata,
-        base_prompt=get_base_prompt(),  # Use the cached base prompt
-        language=detected_language,  # Pass detected language
+        base_prompt=get_base_prompt(),
+        language=detected_language,
         is_deep_dive=is_deep_dive,
         deep_dive_topic=deep_dive_topic,
         deep_dive_count=deep_dive_count,
         is_practice=is_practice,
+        inferred_topic=inferred_topic,
     )
 
     full_prompt += f"\nOriginal Student Question:\n{query}\n"
@@ -612,7 +795,7 @@ def diagnosis_chat(
         full_prompt += f"\nSearch Query (RL Optimized):\n{state['current_query']}\n"
 
     # -----------------------------
-    # Ask LLM (with RL-optimized parameters) or deep-dive direct call
+    # Ask LLM
     # -----------------------------
     if is_deep_dive and chunk_context:
         logger.info("🔍 DEEP-DIVE MODE: Bypassing retriever, reusing stored chunk context")
@@ -627,14 +810,109 @@ def diagnosis_chat(
             chunk_context=chunk_context,
         )
     else:
-        result = student_agent.ask(
-            query=full_prompt,
-            class_name=class_name,
-            subject=subject,
-            student_profile=student_profile,
-            subject_agent_id=subject_agent_id,  # Pass for shared knowledge
-            top_k=top_k
-        )
+        # NORMAL CHAT:
+        # 1. CHECK HISTORY FIRST (Crude check for topic continuity)
+        is_in_history = False
+        if full_context.strip():
+            stop_words = {"what", "is", "the", "how", "why", "who", "where", "when", "tell", "explain", "more", "about"}
+            query_words = [w.lower() for w in query.split() if w.lower() not in stop_words and len(w) > 2]
+            if any(word in full_context.lower() for word in query_words):
+                is_in_history = True
+                logger.info("💬 Topic continuity detected in history.")
+
+        if subject_agent_id:
+            logger.info("💬 NORMAL CHAT: Attempting retriever for knowledge grounding")
+            # Use the RL-optimized query if available, otherwise the original query
+            search_query = state.get("current_query", query)
+            
+            result = student_agent.ask(
+                query=search_query,
+                class_name=class_name,
+                subject=subject,
+                student_profile=student_profile,
+                subject_agent_id=subject_agent_id,
+                top_k=top_k,
+                is_deep_dive=False,
+                chunk_context=None,
+            )
+            
+            has_chunks = False
+            if isinstance(result, dict):
+                chunk_ctx = result.get("chunk_context", "")
+                response_text = result.get("response", "")
+                # Check if we actually got relevant chunks
+                has_chunks = bool(chunk_ctx and len(chunk_ctx) > 50 and response_text and len(response_text) > 20)
+                
+            if has_chunks:
+                logger.info("✅ Retriever found relevant chunks, using its response")
+                # result is already set and has response + chunks
+            else:
+                logger.info("💬 No relevant chunks found in knowledge base. Checking for alternatives.")
+                # We didn't find chunks, so we'll try to fallback
+                result = None
+
+        if not result:
+            # No retriever result (either no chunks or no agent_id)
+            # Try to infer topic or suggest topics
+            suggested_topic = inferred_topic
+            
+            # Logic: If retriever found nothing (has_chunks is False), and it's not a 
+            # personal/general chat, and it's not in history, we MUST suggest topics 
+            # from the KB and bypass the LLM answer entirely.
+            
+            is_personal = is_greeting(query) or is_general_chat(query)
+            
+            if not is_personal and not is_in_history and subject_agent_id:
+                # Suggest topics from knowledge base using random sample
+                logger.info("💬 Academic query with 0 chunks: Bypassing LLM and suggesting topics.")
+                available_topics = get_available_topics_from_agent(
+                    class_name, subject, subject_agent_id, max_topics=5
+                )
+
+                if available_topics:
+                    topic_list = ", ".join(available_topics)
+                    response_text = (
+                        f"I don't have specific information on '{query}' in your current study materials. "
+                        f"However, I can help you with topics like: **{topic_list}**. "
+                        f"Which of these would you like to learn about?"
+                    )
+                    result = {
+                        "response": response_text,
+                        "quality_scores": {},
+                        "chunk_context": "",
+                    }
+                else:
+                    # Fallback to subject if no topics extracted
+                    result = {
+                        "response": f"I don't have information on that specific query, but I'm your {subject} expert. What would you like to learn about in {subject}?",
+                        "quality_scores": {},
+                        "chunk_context": "",
+                    }
+            
+            if not result:
+                # Still no result - call LLM with history + suggested topic + general knowledge
+                logger.info("💬 Calling LLM with conversation history + general knowledge fallback")
+                if suggested_topic:
+                    full_prompt += (
+                        f"\n\nINFERRED/SUGGESTED TOPIC: {suggested_topic}\n"
+                        "If the student's query is vague, assume they are asking about this topic. "
+                        "- ACADEMIC CONSTRAINTS: For subject-specific questions, strictly use the provided retrieved context and conversation history as your primary source.\n"
+                        "- PRIORITY: Always check the conversation history first to see if the query relates to previous turns.\n"
+                        "- BROADER KNOWLEDGE: If chunks (retrieved context) are provided, you may supplement them with your broader teaching knowledge to provide a more comprehensive and intuitive explanation, ensuring it remains consistent with the chunks.\n"
+                        "- GENERAL KNOWLEDGE: If the question is clearly about general knowledge (e.g., capitals, monuments, general facts) and NOT related to your subject specialty, you may answer using your general knowledge.\n"
+                        "Briefly acknowledge this topic in your opening (1 sentence max), then answer the question directly. "
+                    )
+                
+                from student.services.generate_response import generate_response_with_groq
+                response_text = generate_response_with_groq(
+                    query=query,
+                    system_prompt=full_prompt,
+                )
+                result = {
+                    "response": response_text,
+                    "quality_scores": {},
+                    "chunk_context": chunk_ctx,
+                }
 
     if isinstance(result, dict):
         response = result.get("response", "")

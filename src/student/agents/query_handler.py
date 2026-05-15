@@ -9,6 +9,7 @@ from student.services.conversation_summarizer import update_session_summary, get
 from student.utils.agent_utils import get_dynamic_agent_id_for_subject
 from student.repositories.conversation_repository import ConversationManager
 from student.repositories.preference_repository import PreferenceManager
+from common.prompts.topic_inference import infer_topic_from_history
 import time
 import threading
 import logging
@@ -64,17 +65,35 @@ def check_student_exists_cached(student_id, student_manager):
     
     return exists
 
+def _resolve_topic(intent_result: dict, session_context: list, subject: str) -> str:
+    """Extract or infer topic. If missing, infer from history; if still missing, fall back to subject."""
+    topic = intent_result.get("topic")
+    if topic:
+        return topic
+
+    # Try to infer from last 5 conversation turns
+    if session_context:
+        inferred = infer_topic_from_history(session_context[-5:], current_query=payload.query if 'payload' in locals() else "")
+        if inferred:
+            logger.info(f"📍 Inferred topic for intent '{intent_result.get('intent')}': {inferred}")
+            return inferred
+
+    # Fallback to subject name
+    logger.info(f"📍 No topic inferred. Falling back to subject: {subject}")
+    return subject
+
+
 def update_performance_background(student_manager, student_id, subject, query, response, evolution_scores):
     """Background function to update performance metrics asynchronously."""
     try:
         from student.repositories.conversation_repository import ConversationManager
         conversation_manager = ConversationManager()
-        
+
         agent_id = get_dynamic_agent_id_for_subject(student_manager, student_id, subject)
         additional_data = {}
         if agent_id:
             additional_data["subject_agent_id"] = agent_id
-            
+
         conversation_manager.add_conversation(
             student_id=student_id,
             subject=subject,
@@ -86,10 +105,10 @@ def update_performance_background(student_manager, student_id, subject, query, r
             confusion_type=evolution_scores.get("confusion_type", "NO_CONFUSION"),
             additional_data=additional_data
         )
-        
+
         if agent_id:
             logger.info(f"🔄 Background performance update completed for agent: {agent_id}")
-            
+
             # Clear preference cache when student data is updated
             with cache_lock:
                 cache_key = f"{student_id}_{subject}"
@@ -152,7 +171,7 @@ def queryRouter(
 
     intent_result = detect_intent_and_topic(payload.query, payload.subject)
     intent = intent_result["intent"]
-    topic = intent_result.get("topic")
+    topic = _resolve_topic(intent_result, session_context, payload.subject)
 
     # Initialize conversation_manager for use across all intents
     conversation_manager = ConversationManager()
@@ -259,7 +278,8 @@ def queryRouter(
         )
 
         if not quiz_data["quiz"]:
-            response = "Sorry, I couldn't generate a quiz right now."
+            suggested_topic = topic or payload.subject
+            response = f"I couldn't generate a quiz without a specific topic. Based on your recent chats, I can quiz you on '{suggested_topic}'. Want to try that?"
         else:
             create_quiz_session(payload.student_id, quiz_data, payload.subject)
             

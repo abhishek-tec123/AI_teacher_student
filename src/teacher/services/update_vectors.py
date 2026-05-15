@@ -15,6 +15,12 @@ async def update_agent_data(
     agent_name: Optional[str],
     description: Optional[str],
     teaching_tone: Optional[str],
+    persona_vibe: Optional[str],
+    greeting_style: Optional[str],
+    closing_style: Optional[str],
+    response_format_rules: Optional[str],
+    emoji_policy: Optional[str],
+    example_policy: Optional[str],
     global_prompt_enabled: bool,
     global_rag_enabled: bool,
     files: Optional[List[UploadFile]],
@@ -67,6 +73,12 @@ async def update_agent_data(
             "agent_metadata.agent_name": agent_name,
             "agent_metadata.description": description,
             "agent_metadata.teaching_tone": teaching_tone,
+            "agent_metadata.persona_vibe": persona_vibe,
+            "agent_metadata.greeting_style": greeting_style,
+            "agent_metadata.closing_style": closing_style,
+            "agent_metadata.response_format_rules": response_format_rules,
+            "agent_metadata.emoji_policy": emoji_policy,
+            "agent_metadata.example_policy": example_policy,
             "agent_metadata.global_prompt_enabled": global_prompt_enabled,
             "agent_metadata.global_rag_enabled": global_rag_enabled,
         }.items() if v is not None or k in [
@@ -80,6 +92,12 @@ async def update_agent_data(
             {"subject_agent_id": subject_agent_id},
             {"$set": update_fields}
         )
+        # Clear cached persona so next request picks up new fields
+        try:
+            from common.prompts.agent_configs import clear_agent_persona_cache
+            clear_agent_persona_cache()
+        except Exception:
+            pass
     
     # ✅ Auto-enable/disable shared documents based on global_rag_enabled setting
     auto_result = {"auto_enabled_shared_documents": 0, "auto_disabled_shared_documents": 0, "shared_documents": []}
@@ -246,6 +264,18 @@ async def update_agent_data(
             changes.append("description")
         if teaching_tone:
             changes.append("teaching_tone")
+        if persona_vibe:
+            changes.append("persona_vibe")
+        if greeting_style:
+            changes.append("greeting_style")
+        if closing_style:
+            changes.append("closing_style")
+        if response_format_rules:
+            changes.append("response_format_rules")
+        if emoji_policy:
+            changes.append("emoji_policy")
+        if example_policy:
+            changes.append("example_policy")
         if files:
             changes.append("documents")
         # Always include global settings in changes since they're always updated
@@ -283,6 +313,12 @@ async def update_agent_data(
                 "agent_name": agent_name,
                 "description": description,
                 "teaching_tone": teaching_tone,
+                "persona_vibe": persona_vibe,
+                "greeting_style": greeting_style,
+                "closing_style": closing_style,
+                "response_format_rules": response_format_rules,
+                "emoji_policy": emoji_policy,
+                "example_policy": example_policy,
             },
             subject_agent_id=subject_agent_id,
         )

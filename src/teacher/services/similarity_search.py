@@ -45,24 +45,23 @@ def get_llm_response_from_chunk(
 ) -> str:
     """
     Calls the Groq LLM with a combined result string.
-    STRICT VALIDATION: Only processes responses if valid content is provided.
+    If no curriculum content is available, answers from general teaching knowledge.
     Returns the response text.
     """
-    # ABSOLUTE CONTENT VALIDATION
-    if not result_string or not result_string.strip():
-        logger.error("🚫 EMPTY CONTENT: No valid content provided to LLM. Response BLOCKED.")
-        return (
-            "I don't have access to any relevant learning materials for this question. "
-            "Please ask about topics covered in your current curriculum or consult your teacher."
-        )
-    
-    if len(result_string.strip()) < 50:
-        logger.error("🚫 INSUFFICIENT CONTENT: Content too short for meaningful response. Response BLOCKED.")
-        return (
-            "The available learning materials don't contain enough information about this topic. "
-            "Please try a more specific question related to your curriculum."
-        )
-    
+    # When no curriculum content is found, call LLM with general knowledge instructions
+    if not result_string or not result_string.strip() or len(result_string.strip()) < 50:
+        logger.info("⚠️ No curriculum content found. Answering from general teaching knowledge.")
+        try:
+            response_text = generate_response_from_groq(
+                input_text="No specific curriculum materials were found for this query. Please answer using your general teaching knowledge. Do NOT mention missing documents or curriculum limitations.",
+                query=query,
+                student_profile=student_profile
+            )
+            return response_text
+        except Exception as e:
+            logger.error(f"🚫 LLM invocation failed: {e}")
+            return "I apologize, I'm having trouble answering right now. Please try again or rephrase your question."
+
     try:
         response_text = generate_response_from_groq(
             input_text=result_string,
@@ -72,17 +71,14 @@ def get_llm_response_from_chunk(
 
         if not response_text.strip():
             logger.warning("LLM returned empty response despite valid content.")
-            return (
-                "I'm not able to generate a response from the available learning materials. "
-                "Please try rephrasing your question or ask your teacher for clarification."
-            )
+            return "I apologize, I couldn't generate a response. Please try rephrasing your question."
 
         logger.info(f"✅ LLM response generated successfully ({len(response_text)} chars)")
         return response_text
 
     except Exception as e:
         logger.error(f"🚫 LLM invocation failed: {e}")
-        return "I'm not able to process this question with the available learning materials. Please ask your teacher for help."
+        return "I apologize, I'm having trouble answering right now. Please try again."
 
 # -----------------------------
 # Main retrieval + LLM
@@ -173,20 +169,21 @@ def retrieve_chunk_for_query_send_to_llm(
     logger.info(f"[VectorSearch] Atlas search returned {len(results)} results")
 
     if not results:
-        # ABSOLUTE RULE: No chunks retrieved = NO LLM call - no exceptions
-        logger.error("🚫 NO CHUNKS RETRIEVED: Vector search returned no results. LLM call BLOCKED.")
-        safe_msg = (
-            "I'm not able to answer this question from the available learning materials. "
-            "This question appears to be outside the scope of the current curriculum. "
-            "Please try rephrasing your question with terms from your study materials or ask your teacher for help."
-        )
+        # No chunks retrieved — let upstream decide how to proceed with general knowledge
+        logger.error("🚫 NO CHUNKS RETRIEVED: Vector search returned no results. Returning flag for upstream LLM handling.")
         quality_scores = compute_quality_scores(
             query=query,
-            response_text=safe_msg,
+            response_text="",
             retrieved_chunks=[],
             context_string="",
         )
-        return {"response": safe_msg, "quality_scores": quality_scores, "content_restriction": "no_chunks_found", "chunk_context": ""}
+        return {
+            "response": "",
+            "quality_scores": quality_scores,
+            "content_restriction": "no_chunks_found",
+            "chunk_context": "",
+            "proceed_with_general_knowledge": True,
+        }
 
     # -----------------------------
     # LOG ALL retrieved chunks
@@ -209,20 +206,21 @@ def retrieve_chunk_for_query_send_to_llm(
     ]
 
     if not filtered_results:
-        # ABSOLUTE RULE: If nothing passes the similarity threshold, NEVER call the LLM
-        logger.error(f"🚫 NO CHUNKS PASSED THRESHOLD: No chunks passed MIN_SCORE_THRESHOLD={MIN_SCORE_THRESHOLD}. LLM call BLOCKED.")
-        safe_msg = (
-            "I'm not able to find relevant content in the learning materials for this question. "
-            "This question appears to be outside the scope of the current curriculum. "
-            "Please try asking it in a different way using terms from your study materials or consult your teacher."
-        )
+        # No chunks passed threshold — let upstream decide how to proceed with general knowledge
+        logger.error(f"🚫 NO CHUNKS PASSED THRESHOLD: No chunks passed MIN_SCORE_THRESHOLD={MIN_SCORE_THRESHOLD}. Returning flag for upstream LLM handling.")
         quality_scores = compute_quality_scores(
             query=query,
-            response_text=safe_msg,
+            response_text="",
             retrieved_chunks=[],
             context_string="",
         )
-        return {"response": safe_msg, "quality_scores": quality_scores, "content_restriction": "below_threshold", "chunk_context": ""}
+        return {
+            "response": "",
+            "quality_scores": quality_scores,
+            "content_restriction": "below_threshold",
+            "chunk_context": "",
+            "proceed_with_general_knowledge": True,
+        }
 
     # -----------------------------
     # LOG accepted chunks with content

@@ -1,43 +1,14 @@
 import re
 from student.services.generate_response import generate_response_with_groq
 from student.repositories.conversation_repository import ConversationManager  # ✅ Import dynamic agent ID mapping
-from common.utils.prompt_templates import detect_formal_communication  # ✅ Import formal detection from modular templates
-from student.agents.main_agent import get_agent_metadata  # ✅ Import agent metadata from mainAgent
+from common.utils.prompt_templates import detect_formal_communication
+from student.agents.main_agent import get_agent_metadata
 from student.utils.agent_utils import get_dynamic_agent_id_for_subject
-from common.utils.language_detector import get_language_instruction
+from common.prompts import PromptBuilder
 import logging
 logger = logging.getLogger(__name__)
 
-def is_greeting(query: str) -> bool:
-    q = query.lower().strip()
-    patterns = [
-        r"^hi\b",
-        r"^hello\b",
-        r"^hey\b",
-        r"^good (morning|afternoon|evening)\b",
-        # Hindi/Hinglish greetings
-        r"^namaste\b",
-        r"^namaskar\b",
-        r"^pranam\b",
-        r"^kaise\b",
-        r"^kya\s+haal\b",
-    ]
-    return any(re.search(p, q) for p in patterns)
-
-
-def is_general_chat(query: str) -> bool:
-    q = query.lower().strip()
-    patterns = [
-        r"\bmy name is\b",
-        r"\bi am\b",
-        r"\bi'm\b",
-        r"\bhow are you\b",
-        r"\bwhat is my name\b",
-        r"\bwhat's my name\b",
-        r"\btell me about\b",
-        r"\bdo you remember\b",
-    ]
-    return any(re.search(p, q) for p in patterns)
+from student.utils.chat_utils import is_greeting, is_general_chat
 
 # -------------------------------------------------
 # Context Builder
@@ -95,31 +66,13 @@ def handle_greeting_chat(
                 agent_intro = f" I'm {agent_name}. {description}"
                 logger.info(f"🔍 DEBUG: Generated agent_intro: '{agent_intro}'")
     
-    # Get language instruction
-    language_instruction = get_language_instruction(language)
-    
-    # Build response with potential introduction
-    if is_formal and agent_intro:
-        # Formal greeting with introduction - use agent identity
-        system_prompt = (
-            "You are a teacher assistant.\n"
-            f"Your identity: {agent_intro.strip()}\n"
-            f"{language_instruction}\n"
-            "Respond warmly to greetings and introduce yourself using your identity.\n"
-            "Start your response with a warm greeting followed by your introduction.\n"
-            "Example: 'Hello! I'm Diljit manjhi sir. This is diljit here of home science teacher of class 12th. How can I help you today?'\n"
-            "Keep it brief and welcoming."
-        )
-        logger.info(f"🔍 DEBUG: Using formal greeting with intro (lang: {language})")
-    else:
-        # Simple greeting
-        system_prompt = (
-            "You are a friendly student assistant.\n"
-            f"{language_instruction}\n"
-            "Respond warmly and briefly to greetings.\n"
-            "Do not ask academic questions unless student does."
-        )
-        logger.info(f"🔍 DEBUG: Using simple greeting (formal: {is_formal}, intro: '{agent_intro}', lang: {language})")
+    # Build dynamic greeting prompt via PromptBuilder
+    builder = PromptBuilder(
+        agent_id=agent_id,
+        language=language,
+    )
+    system_prompt = builder.build_greeting_prompt(is_formal=is_formal and bool(agent_intro))
+    logger.info(f"🔍 DEBUG: Using dynamic greeting prompt (formal: {is_formal}, lang: {language})")
     
     response = generate_response_with_groq(
         query=payload.query,
@@ -155,21 +108,17 @@ def handle_general_chat_llm(
 ):
     context_text = build_context_text(context)
     
-    # Get language instruction
-    language_instruction = get_language_instruction(language)
+    # Build dynamic general chat prompt via PromptBuilder
+    builder = PromptBuilder(
+        agent_id=get_dynamic_agent_id_for_subject(student_manager, payload.student_id, payload.subject),
+        language=language,
+    )
+    system_prompt = builder.build_general_chat_prompt()
 
     response = generate_response_with_groq(
         query=payload.query,
         context=context_text,
-        system_prompt=(
-            "You are a friendly student assistant.\n"
-            f"{language_instruction}\n"
-            "Rules:\n"
-            "- Answer naturally and briefly\n"
-            "- Use conversation history for personal info\n"
-            "- Do NOT mention systems, databases, or tools\n"
-            "- Do NOT teach unless asked\n"
-        ),
+        system_prompt=system_prompt,
     )
 
     agent_id = get_dynamic_agent_id_for_subject(student_manager, payload.student_id, payload.subject)

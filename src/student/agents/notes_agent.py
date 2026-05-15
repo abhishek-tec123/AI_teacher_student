@@ -1,4 +1,5 @@
 from student.services.conversation_summarizer import summarize_text_with_groq
+from common.prompts import PromptBuilder
 import logging
 logger = logging.getLogger(__name__)
 
@@ -25,38 +26,12 @@ def generate_summary(
         for k, v in student_profile.items():
             profile_hint += f"- {k}: {v}\n"
 
-    prompt = f"""
-You are an intelligent teacher creating a comprehensive learning summary based on student learning conversations.
-
-RULES:
-- Create a concise summary of what the student has learned
-- Focus on key concepts, understanding, and progress made
-- Use clear, accessible language
-- Highlight important insights and breakthrough moments
-- Address any confusion points that were resolved
-- No markdown formatting
-- No emojis
-- No bullet points or numbering
-- Write in paragraph form for easy reading
-
-TOPIC:
-{topic}
-
-STUDENT LEARNING CONVERSATIONS:
-{history_text if history_text else "No previous conversations about this topic"}
-
-STUDENT LEARNING PROFILE:
-{profile_hint}
-
-INSTRUCTIONS:
-- Summarize the student's learning journey on this topic
-- Include key concepts understood and skills developed
-- Note any areas of confusion that were clarified
-- Highlight the student's progress and current understanding level
-- Keep the summary comprehensive but concise
-- Write as if explaining to the student what they have accomplished
-- CRITICAL: Use Unicode subscripts (₀₁₂₃₄₅₆₇₈₉) and superscripts (⁰¹²³⁴⁵⁶⁷⁸⁹) for ALL scientific notation (e.g., H₂O, x², vᵢ).
-"""
+    builder = PromptBuilder()
+    prompt = builder.build_summary_prompt(
+        topic=topic,
+        history_text=history_text if history_text else "No previous conversations about this topic",
+        profile_hint=profile_hint,
+    )
 
     response = summarize_text_with_groq(
         text=topic,
@@ -102,36 +77,12 @@ def generate_notes(
         for k, v in student_profile.items():
             profile_hint += f"- {k}: {v}\n"
 
-    prompt = f"""
-You are an intelligent teacher creating comprehensive study notes based on student learning conversations.
-
-RULES:
-- Bullet points only using "-"
-- No numbering
-- No markdown
-- Beginner friendly but comprehensive
-- Short clear points that build understanding
-- No emojis
-- Focus strictly on the requested topic
-- Use insights from student conversations to address common confusion points
-
-TOPIC:
-{topic}
-
-STUDENT LEARNING CONVERSATIONS:
-{history_text if history_text else "No previous conversations about this topic"}
-
-STUDENT LEARNING PROFILE:
-{profile_hint}
-
-INSTRUCTIONS:
-- Create notes that address concepts the student has discussed
-- Include examples that might clarify confusion points from conversations
-- Structure points logically based on how the student learned the topic
-- Keep explanations simple but thorough
-- FORMATTING: Use `**Header**: *Explanation text*` on the same line for all points.
-- CRITICAL: Use Unicode subscripts (₀₁₂₃₄₅₆₇₈₉) and superscripts (⁰¹²³⁴⁵⁶⁷⁸⁹) for ALL scientific notation (e.g., H₂O, x², vᵢ).
-"""
+    builder = PromptBuilder()
+    prompt = builder.build_notes_prompt(
+        topic=topic,
+        history_text=history_text if history_text else "No previous conversations about this topic",
+        profile_hint=profile_hint,
+    )
 
     response = summarize_text_with_groq(
         text=topic,
