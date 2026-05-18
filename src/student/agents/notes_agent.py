@@ -8,18 +8,35 @@ def generate_summary(
     chat_history: list[dict[str, str]] | None = None,
     student_profile: dict | None = None,
     session_summary: str = "",
+    filter_by_topic: bool = True,
 ) -> str:
     history_text = ""
+
+    if not filter_by_topic:
+        topic = "all topics discussed in the recent learning conversations"
 
     if session_summary:
         history_text = session_summary
         logger.info(f"📝 Using session summary for summary generation ({len(session_summary)} chars)")
     elif chat_history:
-        # Use ALL conversations for comprehensive summary (no topic filtering)
-        for turn in chat_history:
-            history_text += f"Student: {turn['query']}\nTeacher: {turn['response']}\n"
+        if filter_by_topic:
+            topic_relevant_history = []
+            topic_keywords = topic.lower().split()
 
-        logger.info(f"📝 Using all {len(chat_history)} conversations for comprehensive summary")
+            for turn in chat_history:
+                item_text = f"{turn.get('query', '')} {turn.get('response', '')}".lower()
+                if any(keyword in item_text for keyword in topic_keywords if len(keyword) > 2):
+                    topic_relevant_history.append(turn)
+
+            history_to_use = topic_relevant_history if topic_relevant_history else chat_history
+            if topic_relevant_history:
+                logger.info(f"📝 Using {len(topic_relevant_history)} topic-relevant conversations for summary out of {len(chat_history)} total")
+        else:
+            history_to_use = chat_history
+            logger.info(f"📝 Using all {len(chat_history)} conversations for summary (generic session request)")
+
+        for turn in history_to_use:
+            history_text += f"Student: {turn['query']}\nTeacher: {turn['response']}\n"
 
     profile_hint = ""
     if student_profile:
@@ -45,32 +62,35 @@ def generate_notes(
     chat_history: list[dict[str, str]] | None = None,
     student_profile: dict | None = None,
     session_summary: str = "",
+    filter_by_topic: bool = True,
 ) -> str:
     history_text = ""
+
+    if not filter_by_topic:
+        topic = "all topics discussed in the recent learning conversations"
 
     if session_summary:
         history_text = session_summary
         logger.info(f"📝 Using session summary for notes generation ({len(session_summary)} chars)")
     elif chat_history:
-        topic_relevant_history = []
+        if filter_by_topic:
+            topic_relevant_history = []
+            topic_keywords = topic.lower().split()
 
-        # Filter history to focus on topic-relevant conversations
-        topic_keywords = topic.lower().split()
+            for turn in chat_history:
+                item_text = f"{turn.get('query', '')} {turn.get('response', '')}".lower()
+                if any(keyword in item_text for keyword in topic_keywords if len(keyword) > 2):
+                    topic_relevant_history.append(turn)
 
-        for turn in chat_history:
-            item_text = f"{turn.get('query', '')} {turn.get('response', '')}".lower()
-            # Check if any topic keywords appear in the conversation
-            if any(keyword in item_text for keyword in topic_keywords if len(keyword) > 2):
-                topic_relevant_history.append(turn)
-
-        # Use topic-relevant history if available, otherwise use all history
-        history_to_use = topic_relevant_history if topic_relevant_history else chat_history
+            history_to_use = topic_relevant_history if topic_relevant_history else chat_history
+            if topic_relevant_history:
+                logger.info(f"📝 Using {len(topic_relevant_history)} topic-relevant conversations for notes out of {len(chat_history)} total")
+        else:
+            history_to_use = chat_history
+            logger.info(f"📝 Using all {len(chat_history)} conversations for notes (generic session request)")
 
         for turn in history_to_use:
             history_text += f"Student: {turn['query']}\nTeacher: {turn['response']}\n"
-
-        if topic_relevant_history:
-            logger.info(f"📝 Using {len(topic_relevant_history)} topic-relevant conversations for notes out of {len(chat_history)} total")
 
     profile_hint = ""
     if student_profile:

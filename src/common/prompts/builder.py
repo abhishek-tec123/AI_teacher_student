@@ -152,7 +152,7 @@ class PromptBuilder:
             parts.append("If the student's query is vague, assume they are asking about this topic.")
 
         # 7. Format rules
-        parts.append(PromptRegistry.get_template("teacher_format_rules"))
+        parts.append(PromptRegistry.render("teacher_format_rules", is_practice=is_practice))
 
         # 8. Length
         response_length = self.student_profile.get("response_length", "long")
@@ -171,7 +171,7 @@ class PromptBuilder:
 
         # 12. Session context
         if session_context:
-            parts.append(f"\nPrevious conversation (Last 5 turns for context only):\n{session_context}\n")
+            parts.append(f"\nPrevious conversation (Last 20 turns for context only):\n{session_context}\n")
 
         # 13. Final query
         parts.append(f"\nOriginal Student Question:\n{current_query}\n")

@@ -131,10 +131,12 @@ class RLOptimizer:
         """
         prompt = """Rewrite the student query for textbook search. 
 Rules:
-1. If the query is a clear standalone topic (e.g., 'Thermodynamics', 'Photosynthesis'), preserve it as is.
-2. If the query is vague or refers to previous context (e.g., 'examples', 'problem 1', 'explain more', 'answer of this'), you MUST disambiguate it using the provided context (e.g., 'answer of problem 1 about photosynthesis').
-3. DO NOT carry over previous topics if the new query is a clear shift in subject (e.g., student asks about a different chapter).
-4. Output ONLY the rewritten query text. No explanations."""
+1. If the query is a clear standalone topic, preserve it as is (do not translate, alter, or change its meaning).
+2. If the query is vague or refers to previous context (e.g., 'examples', 'problem 1', 'explain more', 'answer of this'), you MUST disambiguate it using the provided context.
+3. DO NOT carry over previous topics if the new query is a clear shift in subject (e.g., student asks about a different chapter or concept).
+4. DO NOT hallucinate, invent, or switch to unrelated topics (like photosynthesis, etc.) if they are not explicitly mentioned in the student's query or the recent context.
+5. If the query contains a minor typo or misspelling (e.g., 'overy'), you can correct it (e.g., 'ovary') or keep it as is, but DO NOT rewrite it to a completely different academic topic.
+6. Output ONLY the rewritten query text. No explanations."""
         if context_text:
             prompt += f"\nRecent Context (Last 2 turns):\n{context_text[:2000]}"
             

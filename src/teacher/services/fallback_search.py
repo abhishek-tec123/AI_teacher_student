@@ -28,7 +28,8 @@ def _fallback_sync_search(
     embedding_model=None,
     student_profile: dict = None,
     top_k: int = TOP_K,
-    disable_rl: bool = False
+    disable_rl: bool = False,
+    custom_prompt: str = None,
 ) -> dict:
     """
     Fallback synchronous search implementation.
@@ -225,7 +226,8 @@ def _fallback_sync_search(
         result_string=result_string,
         query=query,
         student_profile=student_profile,
-        logger=logger
+        logger=logger,
+        custom_prompt=custom_prompt,
     )
     
     if isinstance(response_result, dict):

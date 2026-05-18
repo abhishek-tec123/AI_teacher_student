@@ -114,10 +114,18 @@ def handle_chat_intent(
             logger.info("⚠️ Deep-dive detected but no previous conversation found")
             is_deep_dive = False
 
-    # Prepare academic history
+    # Prepare academic history (using the past 20 valid conversations)
+    from student.agents.query_handler import get_last_20_session_conversations
+    combined_history = get_last_20_session_conversations(
+        student_id=payload.student_id,
+        subject=payload.subject,
+        chat_session_id=chat_session_id,
+        session_context=context
+    )
+
     history_context = [
         f"Q: {turn['query']}\nA: {turn['response']}"
-        for turn in context
+        for turn in combined_history
     ]
 
     # Detect if this is a practice request
@@ -144,6 +152,7 @@ def handle_chat_intent(
     confusion_type = chat.get("confusion_type")
     rl_metadata = chat.get("rl_metadata", {})
     result_chunk_context = chat.get("chunk_context", chunk_context)
+    is_fallback = chat.get("is_fallback", False)
 
     # -----------------------------------------
     # STORE CONVERSATION IMMEDIATELY for conversation_id
@@ -158,6 +167,8 @@ def handle_chat_intent(
         additional_data["is_deep_dive"] = True
         additional_data["deep_dive_count"] = deep_dive_count
         additional_data["deep_dive_topic"] = deep_dive_topic
+    if is_fallback:
+        additional_data["is_fallback"] = True
 
     # Store conversation immediately to get conversation_id
     conversation_id = conversation_manager.add_conversation(
@@ -184,6 +195,7 @@ def handle_chat_intent(
         "evaluation": {"status": "processing"},  # Placeholder evaluation
         "conversation_id": conversation_id,  # Now has actual ID
         "detected_language": detected_language,  # Include detected language
+        "is_fallback": is_fallback,
     }
 
     # -----------------------------------------
@@ -267,9 +279,13 @@ def handle_chat_intent(
                     student_id=payload.student_id,
                     chat_session_id=chat_session_id,
                 )
-                if len(session_conversations) >= 5 and len(session_conversations) % 5 == 0:
+                
+                # Filter out fallback conversations (out-of-scope queries)
+                valid_conversations = [c for c in session_conversations if not c.get("additional_data", {}).get("is_fallback", False)]
+                
+                if len(valid_conversations) >= 5 and len(valid_conversations) % 5 == 0:
                     # Take the 5 most recent conversations (newest first) for context
-                    last_five = session_conversations[:5]
+                    last_five = valid_conversations[:5]
                     # Reverse to chronological order for the summarizer
                     last_five = list(reversed(last_five))
                     update_session_summary(
@@ -367,11 +383,12 @@ def handle_quiz_intent(*, student_manager, payload, topic, chat_session_id=None)
 
     # Fallback to raw history if no session summary
     if not session_summary_text:
-        conversation_manager = ConversationManager()
-        history = conversation_manager.get_conversation_history(
-            payload.student_id,
-            payload.subject,
-            limit=20,
+        from student.agents.query_handler import get_last_20_session_conversations
+        history = get_last_20_session_conversations(
+            student_id=payload.student_id,
+            subject=payload.subject,
+            chat_session_id=chat_session_id,
+            session_context=None
         )
     else:
         history = []
@@ -389,23 +406,27 @@ def handle_quiz_intent(*, student_manager, payload, topic, chat_session_id=None)
 # -------------------------------------------------
 
 def handle_study_plan_intent(*, student_manager, payload, profile, topic, chat_session_id=None):
-    # Try to use session summary for study plan context
-    session_summary_text = ""
-    if chat_session_id:
-        from student.services.conversation_summarizer import get_session_summary
-        session_summary_text = get_session_summary(
-            chat_session_id=chat_session_id,
-            student_manager=student_manager,
-            student_id=payload.student_id,
-        )
-        if session_summary_text:
-            logger.info(f"📝 Using session summary for study plan generation")
+    from student.agents.query_handler import get_last_20_session_conversations
+    
+    # Retrieve the last 20 conversations for rich tailored study plans
+    combined_history = get_last_20_session_conversations(
+        student_id=payload.student_id,
+        subject=payload.subject,
+        chat_session_id=chat_session_id,
+        session_context=None
+    )
+    
+    # Format history as text block
+    history_lines = []
+    for turn in combined_history:
+        history_lines.append(f"Student: {turn['query']}\nTeacher: {turn['response']}")
+    formatted_history = "\n\n".join(history_lines)
 
     plan_text = generate_study_plan_with_subtopics(
         student_sentence=payload.query,
         student_profile=profile,
         explicit_topic=topic,
-        session_summary=session_summary_text,
+        session_summary=formatted_history,
     )
 
     return {

@@ -158,6 +158,7 @@ def generate_quiz_from_history(
     topic: str | None = None,
     num_questions: int = 3,
     session_summary: str = "",
+    filter_by_topic: bool = True,
 ) -> dict:
     """
     Generates a multiple-choice quiz ONCE.
@@ -191,10 +192,8 @@ def generate_quiz_from_history(
         conversation_text = session_summary
         logger.info(f"📝 Using session summary for quiz generation ({len(session_summary)} chars)")
     else:
-        conversation_text = extract_text_from_history(history) if history else ""
-
         # Filter history to focus on topic-relevant conversations if topic is specified
-        if topic and history:
+        if topic and history and filter_by_topic:
             topic_keywords = topic.lower().split()
             topic_relevant_history = []
 
@@ -208,6 +207,11 @@ def generate_quiz_from_history(
             if topic_relevant_history:
                 conversation_text = extract_text_from_history(topic_relevant_history)
                 logger.info(f"🎯 Using {len(topic_relevant_history)} topic-relevant conversations out of {len(history)} total")
+            else:
+                conversation_text = extract_text_from_history(history) if history else ""
+        else:
+            conversation_text = extract_text_from_history(history) if history else ""
+            logger.info(f"🎯 Using all {len(history) if history else 0} conversations for quiz (generic session request)")
 
     from common.prompts import PromptBuilder
 

@@ -41,7 +41,8 @@ def get_llm_response_from_chunk(
     result_string: str,
     query: str,
     student_profile: dict,
-    logger
+    logger,
+    custom_prompt: str = None,
 ) -> str:
     """
     Calls the Groq LLM with a combined result string.
@@ -55,7 +56,8 @@ def get_llm_response_from_chunk(
             response_text = generate_response_from_groq(
                 input_text="No specific curriculum materials were found for this query. Please answer using your general teaching knowledge. Do NOT mention missing documents or curriculum limitations.",
                 query=query,
-                student_profile=student_profile
+                student_profile=student_profile,
+                custom_prompt=custom_prompt,
             )
             return response_text
         except Exception as e:
@@ -66,7 +68,8 @@ def get_llm_response_from_chunk(
         response_text = generate_response_from_groq(
             input_text=result_string,
             query=query,
-            student_profile=student_profile
+            student_profile=student_profile,
+            custom_prompt=custom_prompt,
         )
 
         if not response_text.strip():
@@ -90,7 +93,8 @@ def retrieve_chunk_for_query_send_to_llm(
     embedding_model=None,
     student_profile: dict = None,
     top_k: int = TOP_K,
-    disable_rl: bool = False
+    disable_rl: bool = False,
+    custom_prompt: str = None,
 ) -> dict:
     """
     Retrieves relevant chunks for a query and generates an LLM response.
@@ -255,7 +259,8 @@ def retrieve_chunk_for_query_send_to_llm(
         result_string=result_string,
         query=query,
         student_profile=student_profile or {},
-        logger=logger
+        logger=logger,
+        custom_prompt=custom_prompt,
     )
 
     # -----------------------------

@@ -17,6 +17,7 @@ def run_query(
     top_k: int = 5,
     is_deep_dive: bool = False,
     chunk_context: str = None,
+    custom_prompt: str = None,
 ):
     """
     Execute a single query using the RetrieverAgent and print formatted logs.
@@ -34,6 +35,7 @@ def run_query(
                 input_text=chunk_context,
                 query=query,
                 student_profile=student_profile,
+                custom_prompt=custom_prompt,
             )
             logger.info("\n" + "-" * 60)
             logger.info("✅ Deep-dive response generated successfully")
@@ -55,7 +57,8 @@ def run_query(
             collection_name=collection_name,
             student_profile=student_profile,
             subject_agent_id=subject_agent_id,
-            top_k=top_k
+            top_k=top_k,
+            custom_prompt=custom_prompt,
         )
 
         response = result.get("response", result) if isinstance(result, dict) else result
