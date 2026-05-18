@@ -34,10 +34,40 @@ def _extract_topic_from_query(query: str) -> Optional[str]:
     if not query:
         return None
     q = query.lower().strip()
-    # Skip vague words
-    vague_words = {"why", "how", "what", "explain", "more", "again", "yes", "no", "ok", "okay"}
-    if q in vague_words or len(q.split()) <= 1 and q in vague_words:
+    
+    # Clean up punctuation and common stop words to analyze core content
+    clean_q = re.sub(r"[^\w\s]", "", q).strip()
+    if not clean_q:
         return None
+    
+    # Action words/patterns that indicate a formatting/action request rather than a topic
+    action_patterns = [
+        r"^(?:give\s+me|show|make|create|generate|write|provide)?\s*(?:\d+|five|three|ten|one|two|four|six|seven|eight|nine)?\s*(?:practice\s+|long\s+|short\s+|open\s*ended\s+)?(?:questions?|problems?|tasks?|exercises?|sums?|notes?|quizzes?|quiz|test|mcqs?)\b",
+        r"\b(?:practice\s+|long\s+|short\s+|open\s*ended\s+)?(?:questions?|problems?|tasks?|exercises?|sums?|notes?|quizzes?|quiz|test|mcqs?)\s*(?:on|about|for)?$",
+    ]
+    
+    # If the entire query is just an action request, check for "on/about/for <topic>" clause
+    is_action_only = False
+    for pattern in action_patterns:
+        if re.match(pattern, clean_q):
+            is_action_only = True
+            break
+            
+    if is_action_only or clean_q in {"why", "how", "what", "explain", "more", "again", "yes", "no", "ok", "okay"}:
+        # Check if there is an "on/about/for/of <topic>" part at the end
+        on_match = re.search(r"\b(?:on|about|for|of)\s+(.+)$", q)
+        if on_match:
+            topic_candidate = on_match.group(1).strip()
+            # If topic candidate is just vague or action, return None
+            if topic_candidate not in {"questions", "problems", "notes", "quiz", "mcqs", "sums"}:
+                return topic_candidate
+        return None
+            
+    # Also ignore very short vague queries
+    words = clean_q.split()
+    if len(words) <= 1 and words[0] in {"why", "how", "what", "explain", "more", "again", "yes", "no", "ok", "okay"}:
+        return None
+        
     return query.strip()
 
 
