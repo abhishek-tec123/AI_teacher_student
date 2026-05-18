@@ -74,59 +74,14 @@ Use this context to:
 - Address any confusion points mentioned in the session
 """
 
-    prompt = f"""
-You are an experienced and student-friendly teacher.
+    from common.prompts import PromptBuilder
 
-Create a structured step-by-step study plan for:
-
-TOPIC: {topic}
-
-{session_context}
-
-IMPORTANT RULES:
-- Assume the student is a complete beginner
-- Organize the plan in logical learning order
-- Use clear section headings
-- Use bullet points for subtopics
-- Each subtopic must include a short explanation
-- Do NOT jump to advanced concepts early
-- Keep explanations simple and clear
-
-STRUCTURE FORMAT:
-
-Main Topic: {topic}
-
-1. Basics and Foundations
-- Subtopic
-  Short explanation
-- Subtopic
-  Short explanation
-
-2. Core Concepts
-- Subtopic
-  Short explanation
-- Subtopic
-  Short explanation
-
-3. Rules or Principles
-- Subtopic
-  Short explanation
-
-4. Practice Level
-- Beginner practice
-  What type of problems to solve
-
-5. Applications
-- Real-life use
-  How it applies in real situations
-
-6. Mastery and Review
-- Revision strategy
-  How to review
-- What the student will be able to do after completing this topic
-
-{profile_hint}
-"""
+    builder = PromptBuilder()
+    prompt = builder.build_study_plan_prompt(
+        topic=topic,
+        session_context=session_context,
+        profile_hint=profile_hint,
+    )
 
     response = summarize_text_with_groq(
         text=topic,

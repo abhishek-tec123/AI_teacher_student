@@ -9,6 +9,7 @@ from student.services.conversation_summarizer import update_session_summary, get
 from student.utils.agent_utils import get_dynamic_agent_id_for_subject
 from student.repositories.conversation_repository import ConversationManager
 from student.repositories.preference_repository import PreferenceManager
+from common.prompts.topic_inference import infer_topic_from_history
 import time
 import threading
 import logging
@@ -64,17 +65,35 @@ def check_student_exists_cached(student_id, student_manager):
     
     return exists
 
+def _resolve_topic(intent_result: dict, combined_history: list, subject: str, current_query: str = "") -> str:
+    """Extract or infer topic. If missing, infer from history; if still missing, fall back to subject."""
+    topic = intent_result.get("topic")
+    if topic:
+        return topic
+
+    # Try to infer from the past 20 valid conversations (combined history)
+    if combined_history:
+        inferred = infer_topic_from_history(combined_history[-20:], current_query=current_query)
+        if inferred:
+            logger.info(f"📍 Inferred topic for intent '{intent_result.get('intent')}': {inferred}")
+            return inferred
+
+    # Fallback to subject name
+    logger.info(f"📍 No topic inferred. Falling back to subject: {subject}")
+    return subject
+
+
 def update_performance_background(student_manager, student_id, subject, query, response, evolution_scores):
     """Background function to update performance metrics asynchronously."""
     try:
         from student.repositories.conversation_repository import ConversationManager
         conversation_manager = ConversationManager()
-        
+
         agent_id = get_dynamic_agent_id_for_subject(student_manager, student_id, subject)
         additional_data = {}
         if agent_id:
             additional_data["subject_agent_id"] = agent_id
-            
+
         conversation_manager.add_conversation(
             student_id=student_id,
             subject=subject,
@@ -86,10 +105,10 @@ def update_performance_background(student_manager, student_id, subject, query, r
             confusion_type=evolution_scores.get("confusion_type", "NO_CONFUSION"),
             additional_data=additional_data
         )
-        
+
         if agent_id:
             logger.info(f"🔄 Background performance update completed for agent: {agent_id}")
-            
+
             # Clear preference cache when student data is updated
             with cache_lock:
                 cache_key = f"{student_id}_{subject}"
@@ -100,6 +119,74 @@ def update_performance_background(student_manager, student_id, subject, query, r
             logger.info(f"⚠️ Background update skipped - Agent not found for subject '{subject}'")
     except Exception as e:
         logger.info(f"❌ Background performance update failed: {e}")
+
+def get_last_20_session_conversations(student_id: str, subject: str, chat_session_id: str = None, session_context: list = None) -> list:
+    """
+    Fetches the last 20 conversations for the current session or agent from MongoDB and memory,
+    strictly filtering out any fallback (out-of-scope) interactions.
+    """
+    from student.repositories.conversation_repository import ConversationManager
+    conversation_manager = ConversationManager()
+    
+    # 1. Fetch from MongoDB
+    if chat_session_id:
+        db_history = conversation_manager.get_conversations_by_chat_session(
+            student_id=student_id,
+            chat_session_id=chat_session_id,
+            limit=40  # Fetch more to allow headroom after filtering fallbacks
+        )
+    else:
+        db_history = conversation_manager.get_chat_history_by_agent(
+            student_id=student_id,
+            subject=subject,
+            limit=40
+        )
+        
+    # Format DB history
+    formatted_db_history = []
+    for item in db_history:
+        is_fb = item.get("is_fallback", False) or item.get("additional_data", {}).get("is_fallback", False)
+        if not is_fb:
+            formatted_db_history.append({
+                "query": item.get("query", ""),
+                "response": item.get("response", ""),
+                "evolution": item.get("evaluation", {})
+            })
+            
+    # Reverse DB history to chronological order (since MongoDB query returns newest first)
+    formatted_db_history.reverse()
+    
+    # 2. Append memory context
+    memory_history = []
+    if session_context:
+        for item in session_context:
+            if not item.get("is_fallback", False):
+                memory_history.append({
+                    "query": item.get("query", ""),
+                    "response": item.get("response", ""),
+                    "evolution": item.get("evolution", {})
+                })
+                
+    # Combine (DB history is older, memory history is newer)
+    seen = set()
+    combined = []
+    
+    # Add older DB history first
+    for item in formatted_db_history:
+        key = (item["query"].strip(), item["response"].strip())
+        if key not in seen:
+            seen.add(key)
+            combined.append(item)
+            
+    # Add newer memory history
+    for item in memory_history:
+        key = (item["query"].strip(), item["response"].strip())
+        if key not in seen:
+            seen.add(key)
+            combined.append(item)
+            
+    # Return exactly the last 20 conversations (oldest first)
+    return combined[-20:]
 
 def queryRouter(
     *,
@@ -150,9 +237,20 @@ def queryRouter(
         )
     )
 
+    chat_session_id = getattr(payload, 'chat_session_id', None)
+    combined_history = get_last_20_session_conversations(
+        student_id=payload.student_id,
+        subject=payload.subject,
+        chat_session_id=chat_session_id,
+        session_context=session_context
+    )
+
     intent_result = detect_intent_and_topic(payload.query, payload.subject)
     intent = intent_result["intent"]
-    topic = intent_result.get("topic")
+    
+    # Filter out fallback queries so the topic is inferred from actual academic context
+    valid_combined_history = [ctx for ctx in combined_history if not ctx.get("is_fallback", False)]
+    topic = _resolve_topic(intent_result, valid_combined_history, payload.subject, current_query=payload.query)
 
     # Initialize conversation_manager for use across all intents
     conversation_manager = ConversationManager()
@@ -192,7 +290,8 @@ def queryRouter(
                 "conversation_id": str(conversation_id) if conversation_id else None,
                 "query": payload.query,
                 "response": response,
-                "evolution": evolution_scores
+                "evolution": evolution_scores,
+                "is_fallback": result.get("is_fallback", False)
             }
 
             session_context.append(new_entry)
@@ -219,47 +318,21 @@ def queryRouter(
     # QUIZ
     # =============================
     elif intent == "QUIZ":
-        # Fetch session summary for quiz generation (more efficient than raw history)
-        chat_session_id = getattr(payload, 'chat_session_id', None)
-        session_summary_text = ""
-        if chat_session_id:
-            session_summary_text = get_session_summary(
-                chat_session_id=chat_session_id,
-                student_manager=student_manager,
-                student_id=payload.student_id,
-            )
-            logger.info(f"📝 Using session summary for quiz generation")
-
-        # Fallback to raw history if no session summary available
-        if not session_summary_text:
-            conversation_manager = ConversationManager()
-            stored_history = conversation_manager.get_chat_history_by_agent(
-                student_id=payload.student_id,
-                subject=payload.subject,
-                limit=20
-            )
-            formatted_stored_history = []
-            for item in stored_history:
-                formatted_stored_history.append({
-                    "query": item.get("query", ""),
-                    "response": item.get("response", ""),
-                    "evolution": item.get("evaluation", {})
-                })
-            combined_history = formatted_stored_history + session_context
-        else:
-            combined_history = []
-
         num_questions = intent_result.get("num_questions", 3)
+        explicit_topic_requested = intent_result.get("topic") is not None
+        
         quiz_data = generate_quiz_from_history(
-            history=combined_history if not session_summary_text else None,
+            history=combined_history,
             subject=payload.subject,
             topic=topic,
             num_questions=num_questions,
-            session_summary=session_summary_text,
+            session_summary="",  # Always use raw history for detailed context
+            filter_by_topic=explicit_topic_requested,
         )
 
         if not quiz_data["quiz"]:
-            response = "Sorry, I couldn't generate a quiz right now."
+            suggested_topic = topic or payload.subject
+            response = f"I couldn't generate a quiz without a specific topic. Based on your recent chats, I can quiz you on '{suggested_topic}'. Want to try that?"
         else:
             create_quiz_session(payload.student_id, quiz_data, payload.subject)
             
@@ -376,40 +449,14 @@ def queryRouter(
     # NOTES (🚫 no summary update)
     # =============================
     elif intent == "NOTES":
-        # Fetch session summary for notes generation (more efficient than raw history)
-        chat_session_id = getattr(payload, 'chat_session_id', None)
-        session_summary_text = ""
-        if chat_session_id:
-            session_summary_text = get_session_summary(
-                chat_session_id=chat_session_id,
-                student_manager=student_manager,
-                student_id=payload.student_id,
-            )
-            logger.info(f"📝 Using session summary for notes generation")
-
-        # Fallback to raw history if no session summary available
-        formatted_stored_history = []
-        if not session_summary_text:
-            stored_history = conversation_manager.get_chat_history_by_agent(
-                student_id=payload.student_id,
-                subject=payload.subject,
-                limit=None
-            )
-            for item in stored_history:
-                formatted_stored_history.append({
-                    "query": item.get("query", ""),
-                    "response": item.get("response", ""),
-                    "evolution": item.get("evaluation", {})
-                })
-            combined_history = formatted_stored_history + session_context
-        else:
-            combined_history = []
-
+        explicit_topic_requested = intent_result.get("topic") is not None
+        
         notes = generate_notes(
             topic=topic,
-            chat_history=combined_history if not session_summary_text else None,
+            chat_history=combined_history,
             student_profile=profile,
-            session_summary=session_summary_text,
+            session_summary="",  # Always use raw history for detailed context
+            filter_by_topic=explicit_topic_requested,
         )
 
         response = {
@@ -417,7 +464,6 @@ def queryRouter(
             "notes": notes,
             "metadata": {
                 "history_used": len(combined_history),
-                "stored_history": len(formatted_stored_history),
                 "session_context": len(session_context)
             }
         }
@@ -465,40 +511,14 @@ def queryRouter(
     # SUMMARY (🚫 no summary update)
     # =============================
     elif intent == "SUMMARY":
-        # Fetch session summary for summary generation (more efficient than raw history)
-        chat_session_id = getattr(payload, 'chat_session_id', None)
-        session_summary_text = ""
-        if chat_session_id:
-            session_summary_text = get_session_summary(
-                chat_session_id=chat_session_id,
-                student_manager=student_manager,
-                student_id=payload.student_id,
-            )
-            logger.info(f"📝 Using session summary for summary generation")
-
-        # Fallback to raw history if no session summary available
-        formatted_stored_history = []
-        if not session_summary_text:
-            stored_history = conversation_manager.get_chat_history_by_agent(
-                student_id=payload.student_id,
-                subject=payload.subject,
-                limit=None
-            )
-            for item in stored_history:
-                formatted_stored_history.append({
-                    "query": item.get("query", ""),
-                    "response": item.get("response", ""),
-                    "evolution": item.get("evaluation", {})
-                })
-            combined_history = formatted_stored_history + session_context
-        else:
-            combined_history = []
+        explicit_topic_requested = intent_result.get("topic") is not None
 
         summary = generate_summary(
             topic=topic,
-            chat_history=combined_history if not session_summary_text else None,
+            chat_history=combined_history,
             student_profile=profile,
-            session_summary=session_summary_text,
+            session_summary="",  # Always use raw history for detailed context
+            filter_by_topic=explicit_topic_requested,
         )
 
         response = {
@@ -506,7 +526,6 @@ def queryRouter(
             "summary": summary,
             "metadata": {
                 "history_used": len(combined_history),
-                "stored_history": len(formatted_stored_history),
                 "session_context": len(session_context)
             }
         }

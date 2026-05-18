@@ -74,7 +74,8 @@ class RetrievalOrchestratorAgent:
         collection_name: str,
         student_profile: Optional[dict] = None,  # user can pass dict or None
         subject_agent_id: Optional[str] = None,  # for shared knowledge
-        top_k: int = 5
+        top_k: int = 5,
+        custom_prompt: Optional[str] = None,
     ) -> str:
         """
         Async version of retrieval and response orchestration.
@@ -109,7 +110,8 @@ class RetrievalOrchestratorAgent:
                     embedding_model=self.embedding_model,
                     student_profile=profile.dict(),  # send as dict to similarity_search/groq
                     top_k=top_k,
-                    disable_rl=disable_rl
+                    disable_rl=disable_rl,
+                    custom_prompt=custom_prompt,
                 )
                 return result  # {"response": str, "quality_scores": dict, "sources": list}
             except Exception as e:
@@ -129,7 +131,8 @@ class RetrievalOrchestratorAgent:
         collection_name: str,
         student_profile: Optional[dict] = None,  # user can pass dict or None
         subject_agent_id: Optional[str] = None,  # for shared knowledge
-        top_k: int = 5
+        top_k: int = 5,
+        custom_prompt: Optional[str] = None,
     ) -> str:
         """
         Synchronous wrapper for backward compatibility.
@@ -141,7 +144,7 @@ class RetrievalOrchestratorAgent:
                 # No event loop in this thread
                 return asyncio.run(
                     self.orchestrate_retrieval_and_response_async(
-                        query, db_name, collection_name, student_profile, subject_agent_id, top_k
+                        query, db_name, collection_name, student_profile, subject_agent_id, top_k, custom_prompt
                     )
                 )
 
@@ -152,7 +155,7 @@ class RetrievalOrchestratorAgent:
                     future = executor.submit(
                         asyncio.run, 
                         self.orchestrate_retrieval_and_response_async(
-                            query, db_name, collection_name, student_profile, subject_agent_id, top_k
+                            query, db_name, collection_name, student_profile, subject_agent_id, top_k, custom_prompt
                         )
                     )
                     return future.result(timeout=60)
@@ -160,13 +163,13 @@ class RetrievalOrchestratorAgent:
                 # Loop exists but not running
                 return asyncio.run(
                     self.orchestrate_retrieval_and_response_async(
-                        query, db_name, collection_name, student_profile, subject_agent_id, top_k
+                        query, db_name, collection_name, student_profile, subject_agent_id, top_k, custom_prompt
                     )
                 )
         except Exception as e:
             logger.error(f"Error in async wrapper: {e}")
             # Fallback to synchronous behavior
-            return self._orchestrate_sync_fallback(query, db_name, collection_name, student_profile, subject_agent_id, top_k)
+            return self._orchestrate_sync_fallback(query, db_name, collection_name, student_profile, subject_agent_id, top_k, custom_prompt)
 
     def _orchestrate_sync_fallback(
         self,
@@ -175,7 +178,8 @@ class RetrievalOrchestratorAgent:
         collection_name: str,
         student_profile: Optional[dict] = None,
         subject_agent_id: Optional[str] = None,
-        top_k: int = 5
+        top_k: int = 5,
+        custom_prompt: Optional[str] = None,
     ) -> str:
         """
         Fallback synchronous orchestration.
@@ -208,7 +212,8 @@ class RetrievalOrchestratorAgent:
                 embedding_model=self.embedding_model,
                 student_profile=profile.dict(),  # send as dict to similarity_search/groq
                 top_k=top_k,
-                disable_rl=disable_rl
+                disable_rl=disable_rl,
+                custom_prompt=custom_prompt,
             )
             return result  # {"response": str, "quality_scores": dict, "sources": list}
         except Exception as e:

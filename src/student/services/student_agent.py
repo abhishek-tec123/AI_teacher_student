@@ -42,6 +42,7 @@ class StudentAgent:
         top_k: int = 5,
         is_deep_dive: bool = False,
         chunk_context: Optional[str] = None,
+        custom_prompt: Optional[str] = None,
     ):
         """
         Async version of ask method for better performance.
@@ -62,6 +63,7 @@ class StudentAgent:
                 top_k=top_k,
                 is_deep_dive=is_deep_dive,
                 chunk_context=chunk_context,
+                custom_prompt=custom_prompt,
             )
 
         loop = asyncio.get_event_loop()
@@ -77,6 +79,7 @@ class StudentAgent:
         top_k: int = 5,
         is_deep_dive: bool = False,
         chunk_context: Optional[str] = None,
+        custom_prompt: Optional[str] = None,
     ):
         """
         Run a query with optional student profile.
@@ -89,6 +92,7 @@ class StudentAgent:
             student_profile (dict, optional): Personalization config
             is_deep_dive (bool): If True, bypass retriever and reuse chunk_context
             chunk_context (str, optional): Pre-built chunk context for deep-dive
+            custom_prompt (str, optional): Custom system/format prompt to override default
         """
         try:
             try:
@@ -98,7 +102,7 @@ class StudentAgent:
                 return asyncio.run(
                     self.ask_async(
                         query, class_name, subject, student_profile, subject_agent_id, top_k,
-                        is_deep_dive, chunk_context,
+                        is_deep_dive, chunk_context, custom_prompt
                     )
                 )
 
@@ -110,7 +114,7 @@ class StudentAgent:
                         asyncio.run,
                         self.ask_async(
                             query, class_name, subject, student_profile, subject_agent_id, top_k,
-                            is_deep_dive, chunk_context,
+                            is_deep_dive, chunk_context, custom_prompt
                         )
                     )
                     return future.result(timeout=60)
@@ -119,13 +123,13 @@ class StudentAgent:
                 return asyncio.run(
                     self.ask_async(
                         query, class_name, subject, student_profile, subject_agent_id, top_k,
-                        is_deep_dive, chunk_context,
+                        is_deep_dive, chunk_context, custom_prompt
                     )
                 )
         except Exception as e:
             logger.error(f"Error in async wrapper: {e}")
             # Fallback to synchronous behavior
-            return self._ask_sync_fallback(query, class_name, subject, student_profile, subject_agent_id, top_k, is_deep_dive, chunk_context)
+            return self._ask_sync_fallback(query, class_name, subject, student_profile, subject_agent_id, top_k, is_deep_dive, chunk_context, custom_prompt)
 
     def _ask_sync_fallback(
         self,
@@ -137,6 +141,7 @@ class StudentAgent:
         top_k: int = 5,
         is_deep_dive: bool = False,
         chunk_context: Optional[str] = None,
+        custom_prompt: Optional[str] = None,
     ):
         """
         Fallback synchronous ask method.
@@ -156,4 +161,5 @@ class StudentAgent:
             top_k=top_k,
             is_deep_dive=is_deep_dive,
             chunk_context=chunk_context,
+            custom_prompt=custom_prompt,
         )

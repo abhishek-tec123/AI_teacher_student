@@ -135,7 +135,15 @@ async def create_vectors(
     agent_name: Optional[str] = Form(None),
     description: Optional[str] = Form(None),
     teaching_tone: Optional[str] = Form(None),
-    
+
+    # Persona fields
+    persona_vibe: Optional[str] = Form(None),
+    greeting_style: Optional[str] = Form(None),
+    closing_style: Optional[str] = Form(None),
+    response_format_rules: Optional[str] = Form(None),
+    emoji_policy: Optional[str] = Form(None),
+    example_policy: Optional[str] = Form(None),
+
     # Global settings
     global_prompt_enabled: bool = Form(False),
     global_rag_enabled: bool = Form(False),
@@ -150,6 +158,12 @@ async def create_vectors(
         "agent_name": agent_name,
         "description": description,
         "teaching_tone": teaching_tone,
+        "persona_vibe": persona_vibe,
+        "greeting_style": greeting_style,
+        "closing_style": closing_style,
+        "response_format_rules": response_format_rules,
+        "emoji_policy": emoji_policy,
+        "example_policy": example_policy,
     }.items() if v is not None} or None
 
     # Determine mode
@@ -196,6 +210,12 @@ async def update_agent(
     agent_name: str | None = Form(None),
     description: str | None = Form(None),
     teaching_tone: str | None = Form(None),
+    persona_vibe: str | None = Form(None),
+    greeting_style: str | None = Form(None),
+    closing_style: str | None = Form(None),
+    response_format_rules: str | None = Form(None),
+    emoji_policy: str | None = Form(None),
+    example_policy: str | None = Form(None),
     global_prompt_enabled: bool = Form(False),
     global_rag_enabled: bool = Form(False),
     files: Optional[List[UploadFile]] = None,
@@ -208,6 +228,12 @@ async def update_agent(
         agent_name=agent_name,
         description=description,
         teaching_tone=teaching_tone,
+        persona_vibe=persona_vibe,
+        greeting_style=greeting_style,
+        closing_style=closing_style,
+        response_format_rules=response_format_rules,
+        emoji_policy=emoji_policy,
+        example_policy=example_policy,
         global_prompt_enabled=global_prompt_enabled,
         global_rag_enabled=global_rag_enabled,
         files=files,
