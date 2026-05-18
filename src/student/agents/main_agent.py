@@ -157,25 +157,25 @@ def detect_intent_and_topic(query: str, current_subject: str = None) -> dict:
             "num_questions": _extract_num_questions(q),
         }
 
-    # Post-quiz explanation intent — requires quiz-related context words
-    quiz_context_words = ["question", "q", "answer", "quiz", "test"]
+    # Post-quiz/practice explanation intent — requires quiz or problem context words
+    quiz_context_words = ["question", "q", "answer", "quiz", "test", "problem"]
     has_quiz_context = any(w in q for w in quiz_context_words)
     has_explain_words = any(w in q for w in ["why", "explain", "wrong", "mistake", "correct"])
     if has_quiz_context and has_explain_words:
-        # Check for "last question" / "final question" before digit regex
-        if re.search(r"\b(last|final)\b.*\b(question|q)\b|\b(question|q)\b.*\b(last|final)\b", q):
+        # Check for "last question" / "final question" / "last problem" before digit regex
+        if re.search(r"\b(last|final)\b.*\b(question|q|problem)\b|\b(question|q|problem)\b.*\b(last|final)\b", q):
             return {
                 "intent": "QUIZ_EXPLAIN",
-                "question_number": -1,  # sentinel for "last question"
+                "question_number": -1,  # sentinel for "last question/problem"
             }
 
-        # Try digit regex first (e.g., "question 2", "#3")
-        q_num_match = re.search(r"(?:question|q)\s*(\d+)|#(\d+)", q)
+        # Try digit regex first (e.g., "question 2", "problem 3", "#3")
+        q_num_match = re.search(r"(?:question|q|problem)\s*(\d+)|#(\d+)", q)
         question_number = None
         if q_num_match:
             question_number = int(q_num_match.group(1) or q_num_match.group(2))
         else:
-            # Fallback: try ordinal words (e.g., "second question", "2nd q")
+            # Fallback: try ordinal words (e.g., "second question", "2nd q", "third problem")
             question_number = _extract_question_number_from_ordinals(q)
 
         return {
@@ -222,11 +222,18 @@ def detect_intent_and_topic(query: str, current_subject: str = None) -> dict:
 
     # PRACTICE / PROBLEMS check (simple rule before LLM fallback)
     practice_keywords = ["problem", "exercise", "practice", "solve", "test me", "task", "assignment", "activity", "sum", "example", "question"]
+    explanation_keywords = ["explain", "explanation", "walkthrough", "breakdown", "clarification", "how to", "how do i", "help me", "understand"]
     if any(word in q for word in practice_keywords):
+        # If the query also contains explanation keywords, the student likely wants
+        # an explanation of a specific problem, not new practice questions.
+        if any(word in q for word in explanation_keywords):
+            is_practice = False
+        else:
+            is_practice = True
         return {
             "intent": "CHAT", # Handled by the dynamic prompt rule we added
             "topic": extract_topic_from_sentence(query),
-            "is_practice": True
+            "is_practice": is_practice
         }
 
     # If no rules match, use LLM-based classification for "anything else"
@@ -889,6 +896,7 @@ def diagnosis_chat(
 
     student_profile.setdefault("confusion_counter", {})
     student_profile.setdefault("common_mistakes", [])
+    student_profile["is_practice"] = is_practice
 
     if confusion_type != "NO_CONFUSION":
         student_profile["confusion_counter"][confusion_type] = (
@@ -1006,9 +1014,11 @@ def diagnosis_chat(
                             r_text = turn.get('response','')
                             if isinstance(r_text, dict): r_text = r_text.get('response', '')
                             recent_context += f"Q: {q_text}\nA: {r_text}\n"
-                            topic_match = re.search(r"Topic: \*\*(.+?)\*\*", str(r_text))
+                            topic_match = re.search(r"Topic:\s*\*\*(.+?)\*\*", str(r_text), re.IGNORECASE)
+                            if not topic_match:
+                                topic_match = re.search(r"Topic:\s*(.+?)(?:\n|$)", str(r_text), re.IGNORECASE)
                             if topic_match:
-                                last_topic = topic_match.group(1)
+                                last_topic = topic_match.group(1).strip()
 
                 state["current_query"] = optimizer.rewrite_query(state["current_query"], context_text=recent_context[:2000])
                 if last_topic and any(vague in state["current_query"].lower() for vague in ["problem", "it", "this", "that", "the first", "the second", "explain more"]):

@@ -24,6 +24,7 @@ class StudentProfile(BaseModel):
     include_example: bool = Field(default=True)
     language: str = "English"
     common_mistakes: list = Field(default_factory=list)
+    is_practice: bool = Field(default=False)
 
 # -----------------------------
 # Main Groq response function
@@ -51,24 +52,30 @@ def generate_response_from_groq(
 
     # Construct dynamic prompt from full subject preferences (all keys from DB used in prompt)
     profile_instructions = []
-    profile_instructions.append(f"Target student level: {profile.level}.")
-    profile_instructions.append(f"Use a {profile.tone} tone.")
-    profile_instructions.append(f"Adapt explanation to a {profile.learning_style} learning style.")
-    # Enhanced response length instructions with 3 levels (short, medium, very long)
-    if profile.response_length == "short":
-        profile_instructions.append("Keep response SHORT (2-3 paragraphs). Include key concept and basic explanation with minimal examples.")
-    elif profile.response_length == "medium":
-        profile_instructions.append("Provide MEDIUM length response (3-4 paragraphs). Include main concept, explanation, and one clear example.")
-    elif profile.response_length == "very long":
-        profile_instructions.append("Provide VERY LONG response (5+ paragraphs). Include comprehensive explanation, multiple examples, context, and deeper insights.")
+    
+    if getattr(profile, "is_practice", False):
+        profile_instructions.append(f"Target student level: {profile.level}.")
+        profile_instructions.append(f"Use a {profile.tone} tone.")
+        profile_instructions.append("The student has requested practice problems. Provide ONLY the problems, a brief welcoming intro, and a follow-up query. Do NOT include any answers, explanations, concepts, examples, analogies, or deeper insights. Ensure exactly the specified number of questions are generated.")
     else:
-        profile_instructions.append("Provide VERY LONG response (5+ paragraphs). Include comprehensive explanation, multiple examples, context, and deeper insights.")
-    if profile.include_example:
-        profile_instructions.append("Include an example to illustrate the concept.")
-    if profile.common_mistakes:
-        profile_instructions.append(
-            f"Student often has these gaps; address gently and avoid reinforcing: {profile.common_mistakes}."
-        )
+        profile_instructions.append(f"Target student level: {profile.level}.")
+        profile_instructions.append(f"Use a {profile.tone} tone.")
+        profile_instructions.append(f"Adapt explanation to a {profile.learning_style} learning style.")
+        # Enhanced response length instructions with 3 levels (short, medium, very long)
+        if profile.response_length == "short":
+            profile_instructions.append("Keep response SHORT (2-3 paragraphs). Include key concept and basic explanation with minimal examples.")
+        elif profile.response_length == "medium":
+            profile_instructions.append("Provide MEDIUM length response (3-4 paragraphs). Include main concept, explanation, and one clear example.")
+        elif profile.response_length == "very long":
+            profile_instructions.append("Provide VERY LONG response (5+ paragraphs). Include comprehensive explanation, multiple examples, context, and deeper insights.")
+        else:
+            profile_instructions.append("Provide VERY LONG response (5+ paragraphs). Include comprehensive explanation, multiple examples, context, and deeper insights.")
+        if profile.include_example:
+            profile_instructions.append("Include an example to illustrate the concept.")
+        if profile.common_mistakes:
+            profile_instructions.append(
+                f"Student often has these gaps; address gently and avoid reinforcing: {profile.common_mistakes}."
+            )
 
     profile_prompt = "Student preferences (use in your answer):\n" + " ".join(profile_instructions)
     system_prompt = custom_prompt or "Answer the user query concisely and accurately."

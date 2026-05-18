@@ -574,9 +574,7 @@ def queryRouter(
     # =============================
     elif intent == "QUIZ_EXPLAIN":
         completed = get_last_completed_quiz(payload.student_id)
-        if not completed:
-            response = "You don't have a recent quiz to explain. Start a quiz first!"
-        else:
+        if completed:
             question_number = intent_result.get("question_number")
             explanation = generate_quiz_explanation(
                 completed_quiz=completed,
@@ -584,6 +582,45 @@ def queryRouter(
                 student_query=payload.query,
             )
             response = explanation
+        else:
+            # No formal quiz exists, but the student may be asking about a practice
+            # problem/question from the recent CHAT history. Fall back to CHAT intent
+            # so the LLM can explain using the conversation context.
+            result = handle_chat_intent(
+                student_agent=student_agent,
+                student_manager=student_manager,
+                payload=payload,
+                profile=profile,
+                context=session_context,
+                preference_manager=preference_manager,
+                chat_session_id=getattr(payload, 'chat_session_id', None)
+            )
+
+            response = result["response"]
+            conversation_id = result.get("conversation_id")
+            evolution_scores = result.get("evaluation", {})
+
+            immediate_response = {
+                "response": response,
+                "conversation_id": conversation_id,
+                "evaluation": evolution_scores,
+                "status": "success"
+            }
+
+            try:
+                new_entry = {
+                    "conversation_id": str(conversation_id) if conversation_id else None,
+                    "query": payload.query,
+                    "response": response,
+                    "evolution": evolution_scores,
+                    "is_fallback": result.get("is_fallback", False)
+                }
+                session_context.append(new_entry)
+                context_store[payload.student_id] = session_context[-10:]
+            except Exception:
+                pass
+
+            return immediate_response
 
     return JSONResponse(
         content={
