@@ -314,7 +314,8 @@ class ConversationManager:
                 "student_id": student_id,
                 "query": convo.get("query"),
                 "response": convo.get("response"),
-                "evaluation": convo.get("evaluation", {})
+                "evaluation": convo.get("evaluation", {}),
+                "additional_data": convo.get("additional_data", {})
             })
 
         return formatted_history
@@ -562,7 +563,8 @@ class ConversationManager:
                 # "confusion_type": conv.get("confusion_type", "NO_CONFUSION"),
                 "timestamp": conv["timestamp"].isoformat() if conv.get("timestamp") else None,
                 # "evaluation": conv.get("evaluation", {}),
-                "agent_id": conv.get("subject_agent_id")
+                "agent_id": conv.get("subject_agent_id"),
+                "additional_data": conv.get("additional_data", {})
             }
             for conv in session_conversations
         ]

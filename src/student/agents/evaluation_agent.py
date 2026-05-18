@@ -40,108 +40,6 @@ def _evaluate_with_limiter(messages):
         return _get_evaluator_llm().invoke(messages)
 
 
-EVALUATION_PROMPT = """
-You are a STRICT educational response evaluator.
-
-IMPORTANT:
-- You did NOT generate the assistant response.
-- You are an external reviewer.
-- Do NOT default to mid-range scores.
-- Use the FULL score range when justified.
-- Penalize mismatches with the student profile.
-- If the response is TOO BASIC for an ADVANCED student,
-  personalization MUST be BELOW 0.4.
-- Be fair, but do not be lenient.
-
-Return ONLY valid JSON. No extra text.
-
---------------------------------------------------
-SCORING GUIDELINES (0.0 – 1.0)
---------------------------------------------------
-
-clarity:
-- Is the explanation easy to follow and well-structured?
-- Is it concise and aligned with desired response length?
-
-correctness:
-- Is the response factually correct?
-- Simplified explanations are OK IF NOT misleading.
-
-personalization:
-- Does the response match the student's level, tone,
-  learning style, and length constraints?
-- Penalize generic or beginner-level explanations
-  given to advanced students.
-
-pedagogical_value:
-- Does the response meaningfully help learning?
-- Does it provide insight, structure, or conceptual clarity?
-- Generic encouragement without substance should score LOW.
-
-critical_confidence:
-- Is the answer confident and decisive when appropriate?
-- Penalize unnecessary hedging.
-
-model_certainty:
-- Is certainty justified by content?
-- Penalize unjustified confidence or excessive doubt.
-
-rag_relevance:
-- If external context or retrieval is implied, is it used meaningfully?
-- Penalize generic answers when context-specific grounding is expected.
-
-answer_completeness:
-- Does the response fully address all parts of the query?
-- Penalize partial or shallow answers.
-
-hallucination_risk:
-- Likelihood of fabricated facts or unsupported claims.
-- 1.0 = very low risk, 0.0 = high risk.
-
---------------------------------------------------
-CONTEXT
---------------------------------------------------
-
-Student Query:
-{query}
-
-Subject:
-{subject}
-
-Student Profile:
-- Level: {level}
-- Learning Style: {learning_style}
-- Prefers Examples: {include_example}
-- Tone Preference: {tone}
-- Desired Response Length: {response_length}
-
-Detected Confusion Type:
-{confusion_type}
-
-Assistant Response:
-{response}
-
---------------------------------------------------
-OUTPUT FORMAT (STRICT)
---------------------------------------------------
-
-Return JSON EXACTLY in this format:
-
-{{
-  "pedagogical_value": float,
-  "critical_confidence": float,
-  "rag_relevance": float,
-  "answer_completeness": float,
-  "hallucination_risk": float
-}}
-
-Rules:
-- Scores must be between 0.0 and 1.0
-- Use decimals like 0.35, 0.60, 0.85
-- Do NOT add any text outside the JSON
-"""
-
-
 def evaluate_response(
     *,
     query: str,
@@ -152,18 +50,16 @@ def evaluate_response(
 ):
     """
     Evaluates a generated tutoring response and returns ONLY scores.
+    Uses PromptBuilder + Pydantic schema enforcement.
     """
+    from common.prompts import PromptBuilder, EvaluationScores
 
-    prompt = EVALUATION_PROMPT.format(
+    builder = PromptBuilder(student_profile=profile)
+    prompt = builder.build_evaluation_prompt(
         query=query,
-        subject=subject,
-        level=profile.get("level", "unknown"),
-        learning_style=profile.get("learning_style", "unknown"),
-        include_example=profile.get("include_example", False),
-        tone=profile.get("tone", "neutral"),
-        response_length=profile.get("response_length", "unspecified"),
-        confusion_type=confusion_type or "None",
         response=response,
+        subject=subject,
+        confusion_type=confusion_type,
     )
 
     message = HumanMessage(content=prompt)
@@ -179,7 +75,14 @@ def evaluate_response(
     try:
         result = _evaluate_with_limiter([message])
         raw_output = result.content.strip()
-        scores = json.loads(raw_output)
+
+        # Try strict Pydantic validation first
+        try:
+            validated = EvaluationScores.model_validate_json(raw_output)
+            scores = validated.model_dump()
+        except Exception:
+            # Fallback to manual JSON parsing if LLM wraps JSON in markdown
+            scores = json.loads(raw_output)
 
         if not isinstance(scores, dict):
             raise ValueError("Scores is not a dict")

@@ -17,6 +17,7 @@ def run_query(
     top_k: int = 5,
     is_deep_dive: bool = False,
     chunk_context: str = None,
+    custom_prompt: str = None,
 ):
     """
     Execute a single query using the RetrieverAgent and print formatted logs.
@@ -34,6 +35,7 @@ def run_query(
                 input_text=chunk_context,
                 query=query,
                 student_profile=student_profile,
+                custom_prompt=custom_prompt,
             )
             logger.info("\n" + "-" * 60)
             logger.info("✅ Deep-dive response generated successfully")
@@ -54,13 +56,26 @@ def run_query(
             db_name=db_name,
             collection_name=collection_name,
             student_profile=student_profile,
-            subject_agent_id=subject_agent_id,  # Pass for shared knowledge
-            top_k=top_k
+            subject_agent_id=subject_agent_id,
+            top_k=top_k,
+            custom_prompt=custom_prompt,
         )
 
         response = result.get("response", result) if isinstance(result, dict) else result
         quality_scores = result.get("quality_scores", {}) if isinstance(result, dict) else {}
         chunk_context = result.get("chunk_context", "") if isinstance(result, dict) else ""
+
+        # If retriever signalled to proceed with general knowledge (no chunks found),
+        # return the flag upstream so it can decide how to proceed (e.g., inject inferred topic).
+        if isinstance(result, dict) and result.get("proceed_with_general_knowledge") and not response:
+            logger.info("💬 No chunks found. Returning flag for upstream LLM handling.")
+            return {
+                "response": "",
+                "quality_scores": quality_scores,
+                "chunk_context": chunk_context,
+                "from_cache": False,
+                "proceed_with_general_knowledge": True,
+            }
 
         logger.info("\n" + "-" * 60)
         logger.info("✅ Response generated successfully")

@@ -36,7 +36,8 @@ async def retrieve_chunks_with_shared_knowledge_async(
     embedding_model=None,
     student_profile: dict = None,
     top_k: int = 5,
-    disable_rl: bool = False
+    disable_rl: bool = False,
+    custom_prompt: str = None,
 ) -> dict:
     """
     Async enhanced retrieval that includes both agent-specific and shared knowledge documents.
@@ -235,7 +236,8 @@ async def retrieve_chunks_with_shared_knowledge_async(
         result_string=result_string,
         query=query,
         student_profile=student_profile,
-        logger=logger
+        logger=logger,
+        custom_prompt=custom_prompt,
     )
     
     logger.info("=" * 80)
@@ -281,7 +283,8 @@ def retrieve_chunks_with_shared_knowledge(
     embedding_model=None,
     student_profile: dict = None,
     top_k: int = 5,
-    disable_rl: bool = False
+    disable_rl: bool = False,
+    custom_prompt: str = None,
 ) -> dict:
     """
     Synchronous wrapper for backward compatibility.
@@ -294,7 +297,7 @@ def retrieve_chunks_with_shared_knowledge(
             return asyncio.run(
                 retrieve_chunks_with_shared_knowledge_async(
                     query, db_name, collection_name, subject_agent_id,
-                    embedding_model, student_profile, top_k
+                    embedding_model, student_profile, top_k, disable_rl, custom_prompt
                 )
             )
 
@@ -306,7 +309,7 @@ def retrieve_chunks_with_shared_knowledge(
                     asyncio.run, 
                     retrieve_chunks_with_shared_knowledge_async(
                         query, db_name, collection_name, subject_agent_id,
-                        embedding_model, student_profile, top_k
+                        embedding_model, student_profile, top_k, disable_rl, custom_prompt
                     )
                 )
                 return future.result(timeout=30)
@@ -315,13 +318,13 @@ def retrieve_chunks_with_shared_knowledge(
             return asyncio.run(
                 retrieve_chunks_with_shared_knowledge_async(
                     query, db_name, collection_name, subject_agent_id,
-                    embedding_model, student_profile, top_k
+                    embedding_model, student_profile, top_k, disable_rl, custom_prompt
                 )
             )
     except Exception as e:
         logger.error(f"Error in async wrapper: {e}")
         # Fallback to synchronous behavior
-        return _fallback_sync_search(query, db_name, collection_name, subject_agent_id, embedding_model, student_profile, top_k, disable_rl)
+        return _fallback_sync_search(query, db_name, collection_name, subject_agent_id, embedding_model, student_profile, top_k, disable_rl, custom_prompt)
 
 # -----------------------------
 # Backward compatibility wrapper
@@ -334,7 +337,8 @@ def retrieve_chunk_for_query_send_to_llm_enhanced(
     embedding_model=None,
     student_profile: dict = None,
     top_k: int = TOP_K,
-    disable_rl: bool = False
+    disable_rl: bool = False,
+    custom_prompt: str = None,
 ) -> dict:
     """
     Enhanced version of retrieve_chunk_for_query_send_to_llm that includes shared knowledge.
@@ -350,7 +354,8 @@ def retrieve_chunk_for_query_send_to_llm_enhanced(
             embedding_model=embedding_model,
             student_profile=student_profile,
             top_k=top_k,
-            disable_rl=disable_rl
+            disable_rl=disable_rl,
+            custom_prompt=custom_prompt,
         )
     
     # Use enhanced search with shared knowledge
@@ -362,5 +367,6 @@ def retrieve_chunk_for_query_send_to_llm_enhanced(
         embedding_model=embedding_model,
         student_profile=student_profile,
         top_k=top_k,
-        disable_rl=disable_rl
+        disable_rl=disable_rl,
+        custom_prompt=custom_prompt,
     )

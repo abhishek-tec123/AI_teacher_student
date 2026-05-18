@@ -40,4 +40,31 @@ def get_agent_data(subject_agent_id: str):
                     "file_names": file_names,
                 }
 
-    raise HTTPException(status_code=404, detail="Agent not found")
+def get_all_agents_data():
+    """Retrieve all agent metadata across all databases."""
+    MONGODB_URI = settings.mongodb_uri
+    if not MONGODB_URI:
+        raise HTTPException(status_code=500, detail="MongoDB URI not configured")
+
+    client = MongoClient(MONGODB_URI)
+    agents = []
+
+    for db_name in client.list_database_names():
+        if db_name in ["admin", "local", "config"]:
+            continue
+
+        db = client[db_name]
+        for collection_name in db.list_collection_names():
+            collection = db[collection_name]
+            cursor = collection.find(
+                {"subject_agent_id": {"$exists": True}},
+                {
+                    "subject_agent_id": 1,
+                    "agent_metadata": 1,
+                    "_id": 0,
+                }
+            )
+            for doc in cursor:
+                agents.append(doc)
+
+    return agents

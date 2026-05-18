@@ -158,6 +158,7 @@ def generate_quiz_from_history(
     topic: str | None = None,
     num_questions: int = 3,
     session_summary: str = "",
+    filter_by_topic: bool = True,
 ) -> dict:
     """
     Generates a multiple-choice quiz ONCE.
@@ -191,10 +192,8 @@ def generate_quiz_from_history(
         conversation_text = session_summary
         logger.info(f"📝 Using session summary for quiz generation ({len(session_summary)} chars)")
     else:
-        conversation_text = extract_text_from_history(history) if history else ""
-
         # Filter history to focus on topic-relevant conversations if topic is specified
-        if topic and history:
+        if topic and history and filter_by_topic:
             topic_keywords = topic.lower().split()
             topic_relevant_history = []
 
@@ -208,54 +207,21 @@ def generate_quiz_from_history(
             if topic_relevant_history:
                 conversation_text = extract_text_from_history(topic_relevant_history)
                 logger.info(f"🎯 Using {len(topic_relevant_history)} topic-relevant conversations out of {len(history)} total")
+            else:
+                conversation_text = extract_text_from_history(history) if history else ""
+        else:
+            conversation_text = extract_text_from_history(history) if history else ""
+            logger.info(f"🎯 Using all {len(history) if history else 0} conversations for quiz (generic session request)")
 
-    topic_instruction = (
-        f"The quiz MUST be strictly about this topic: {topic}.\n"
-        f"Focus on concepts discussed in the student's learning history.\n"
-        if topic else
-        "The quiz should be based on the student's recent learning conversations.\n"
+    from common.prompts import PromptBuilder
+
+    builder = PromptBuilder()
+    prompt = builder.build_quiz_prompt(
+        conversation_text=conversation_text,
+        topic=topic,
+        num_questions=num_questions,
     )
 
-    prompt = f"""
-You are an intelligent exam generator that creates personalized quizzes based on student learning history.
-
-CRITICAL RULES (DO NOT BREAK):
-- Generate EXACTLY {num_questions} multiple-choice questions
-- Return ONLY valid JSON
-- NO markdown
-- NO explanations
-- NO text before or after JSON
-- Each question MUST include:
-  - question (string)
-  - options (array of exactly 4 strings)
-  - answer (string matching one option)
-
-QUIZ GENERATION GUIDELINES:
-- Base questions on the student's actual learning conversations
-- Focus on concepts the student has discussed or struggled with
-- If topic is specified, ALL questions must be about that topic
-- Use appropriate difficulty level based on conversation context
-- Create questions that test understanding, not just memorization
-
-{topic_instruction}
-
-Student Learning Context:
-{conversation_text}
-
-JSON FORMAT (ONLY THIS):
-{{
-  "quiz": [
-    {{
-      "question": "Question text",
-      "options": ["A", "B", "C", "D"],
-      "answer": "A"
-    }}
-  ]
-}}
-"""
-
-    # The prompt already contains conversation_text; pass a short instruction
-    # to avoid duplicating the full context inside summarize_text_with_groq.
     raw_output = summarize_text_with_groq(
         text="Generate the quiz JSON now.",
         prompt=prompt
@@ -277,33 +243,17 @@ JSON FORMAT (ONLY THIS):
         if len(quiz_clean) == 0:
             logger.info("Retrying with simplified quiz generation...")
 
-            # Create a simpler, more direct prompt
-            simple_prompt = f"""
-Generate exactly {num_questions} multiple-choice questions about {topic or subject}.
+            # Retry with simpler prompt
+            retry_prompt = builder.build_quiz_prompt(
+                conversation_text=conversation_text[:1000] if conversation_text else (topic or subject),
+                topic=topic or subject,
+                num_questions=num_questions,
+                is_retry=True,
+            )
 
-Student Learning Context:
-{conversation_text[:1000] if conversation_text else f"Topic: {topic}"}
-
-Format: Return ONLY a JSON array like this:
-[
-  {{
-    "question": "What is X?",
-    "options": ["A", "B", "C", "D"],
-    "answer": "A"
-  }}
-]
-
-Requirements:
-- Exactly {num_questions} questions
-- 4 options each
-- Answer must match one option
-- Based on the learning context above
-"""
-
-            # Retry with simpler prompt (avoid duplicating context again)
             retry_output = summarize_text_with_groq(
                 text="Generate the quiz JSON now.",
-                prompt=simple_prompt
+                prompt=retry_prompt
             )
             
             retry_parsed = extract_json_from_text(retry_output)
