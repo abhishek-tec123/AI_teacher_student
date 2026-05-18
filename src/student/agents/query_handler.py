@@ -186,39 +186,32 @@ def queryRouter(
             "status": "success"
         }
 
-        # 🚀 BACKGROUND: Update session context and summary (non-blocking)
-        def background_session_update():
+        # 🚀 IMMEDIATE: Update session context (MUST be synchronous for next query consistency)
+        try:
+            new_entry = {
+                "conversation_id": str(conversation_id) if conversation_id else None,
+                "query": payload.query,
+                "response": response,
+                "evolution": evolution_scores
+            }
+
+            session_context.append(new_entry)
+            # Keep only last 10 raw messages
+            context_store[payload.student_id] = session_context[-10:]
+            logger.info(f"✅ Session context updated synchronously for {payload.student_id}")
+        except Exception as e:
+            logger.info(f"❌ Session context update failed: {e}")
+
+        # 🚀 BACKGROUND: Update summary and other non-critical tasks
+        def background_tasks():
             try:
-                new_entry = {
-                    "conversation_id": str(conversation_id) if conversation_id else None,
-                    "query": payload.query,
-                    "response": response,
-                    "evolution": evolution_scores
-                }
-
-                session_context.append(new_entry)
-                # Keep only last 10 raw messages
-                context_store[payload.student_id] = session_context[-10:]
-
-                # Update session summary in background
-                chat_session_id = getattr(payload, 'chat_session_id', None)
-                if chat_session_id:
-                    update_session_summary(
-                        chat_session_id=chat_session_id,
-                        query=payload.query,
-                        response=response,
-                        student_manager=student_manager,
-                    )
-                    logger.info(f"🔄 Background session summary updated for session: {chat_session_id}")
-                else:
-                    logger.info(f"⚠️ Skipping session summary update - no chat_session_id")
+                # Session summary is handled by intent_handlers.py (every 5 messages)
+                logger.info(f"⏭️ Background tasks for summary/analytics started")
             except Exception as e:
-                logger.info(f"❌ Background session update failed: {e}")
+                logger.info(f"❌ Background tasks failed: {e}")
 
-        # Start background processing
-        session_thread = threading.Thread(target=background_session_update, daemon=True)
+        session_thread = threading.Thread(target=background_tasks, daemon=True)
         session_thread.start()
-        logger.info(f"🚀 Session update moved to background for faster response")
 
         return immediate_response
 
@@ -395,13 +388,13 @@ def queryRouter(
             logger.info(f"📝 Using session summary for notes generation")
 
         # Fallback to raw history if no session summary available
+        formatted_stored_history = []
         if not session_summary_text:
             stored_history = conversation_manager.get_chat_history_by_agent(
                 student_id=payload.student_id,
                 subject=payload.subject,
                 limit=None
             )
-            formatted_stored_history = []
             for item in stored_history:
                 formatted_stored_history.append({
                     "query": item.get("query", ""),
@@ -484,13 +477,13 @@ def queryRouter(
             logger.info(f"📝 Using session summary for summary generation")
 
         # Fallback to raw history if no session summary available
+        formatted_stored_history = []
         if not session_summary_text:
             stored_history = conversation_manager.get_chat_history_by_agent(
                 student_id=payload.student_id,
                 subject=payload.subject,
                 limit=None
             )
-            formatted_stored_history = []
             for item in stored_history:
                 formatted_stored_history.append({
                     "query": item.get("query", ""),

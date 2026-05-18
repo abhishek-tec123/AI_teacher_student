@@ -180,48 +180,31 @@ def compute_quality_scores(
         else:
             logger.info(f"   - No chunk scores found, RAG relevance remains 0%")
 
-    # LLM-based scores: model_certainty, answer_completeness, hallucination_risk
-    groq_api_key = settings.groq_api_key
-    if groq_api_key and query and response_text and context_string:
-        prompt = f"""Evaluate this RAG response. Return ONLY valid JSON.
+    # Heuristic-based scores (no LLM call — saves tokens)
+    # model_certainty / critical_confidence: longer responses = higher confidence
+    response_len = len(response_text.strip())
+    if response_len > 500:
+        scores["model_certainty"] = 80
+        scores["critical_confidence"] = 80
+    elif response_len > 200:
+        scores["model_certainty"] = 60
+        scores["critical_confidence"] = 60
+    else:
+        scores["model_certainty"] = 40
+        scores["critical_confidence"] = 40
 
-Query: "{query}"
+    # answer_completeness: tie to RAG relevance
+    if scores["rag_relevance"] >= 50:
+        scores["answer_completeness"] = 75
+    else:
+        scores["answer_completeness"] = 40
 
-Retrieved Context:
-{context_string[:2000]}
+    # hallucination_risk: fewer chunks = higher risk
+    chunk_count = len(retrieved_chunks) if retrieved_chunks else 0
+    if chunk_count < 3:
+        scores["hallucination_risk"] = 80
+    else:
+        scores["hallucination_risk"] = 20
 
-Generated Response:
-{response_text[:1500]}
-
-Score each metric 0-100 (integers):
-- model_certainty: How confident is the model in this answer? (100 = very confident)
-- answer_completeness: Does the answer fully address the query? (100 = fully complete)
-- hallucination_risk: Risk of fabricated/unsupported content (0 = none, 100 = high risk)
-
-Return ONLY this JSON (no other text):
-{{"model_certainty": N, "answer_completeness": N, "hallucination_risk": N}}"""
-
-        try:
-            from common.llm.groq_client import sync_invoke_with_limiters
-            out = sync_invoke_with_limiters(
-                messages=[HumanMessage(content=prompt)],
-                model_name=settings.groq_llm,
-                api_key=groq_api_key,
-                retry_on_429=True,
-            )
-            raw = getattr(out, "content", str(out))
-            # Parse JSON from response
-            match = re.search(r"\{[\s\S]*?\}", raw)
-            if match:
-                parsed = json.loads(match.group(0).replace("'", '"'))
-                scores["model_certainty"] = int(parsed.get("model_certainty", 50))
-                scores["critical_confidence"] = scores["model_certainty"]
-                scores["answer_completeness"] = int(parsed.get("answer_completeness", 50))
-                scores["hallucination_risk"] = int(parsed.get("hallucination_risk", 50))
-                # Clamp 0-100
-                for k in ["model_certainty", "critical_confidence", "answer_completeness", "hallucination_risk"]:
-                    scores[k] = max(0, min(100, scores[k]))
-        except Exception as e:
-            logger.warning(f"Quality score LLM evaluation failed: {e}")
-
+    logger.info("📊 Quality scores computed via heuristics (no LLM call)")
     return scores

@@ -35,29 +35,28 @@ def extract_core_question(query: str) -> str:
     # Pattern 0: "Search Query (RL Optimized):\n<query>"
     # This comes from mainAgent.py after RL optimization
     # Using re.DOTALL and a more flexible pattern to catch the content before the next section
-    match = re.search(r"Search Query \(RL Optimized\):\s*\n\s*(.+?)(?:\n\n|\n[A-Z][a-z]+:|$)", query, re.DOTALL | re.IGNORECASE)
+    match = re.search(r"Search Query \(RL Optimized\):\s*\n\s*(.+?)(?:\n\n|\n[A-Z][a-z\s]+:|$)", query, re.DOTALL | re.IGNORECASE)
     if match:
         core = match.group(1).strip()
         if core:
-            # print(f"DEBUG: Extracted via Pattern 0: {core[:100]}...")
             return core
 
     # Pattern 0.1: "Original Student Question:\n<question>"
-    match = re.search(r"Original Student Question:\s*\n\s*(.+?)(?:\n\n|\nSearch Query|$)", query, re.DOTALL | re.IGNORECASE)
+    match = re.search(r"Original Student Question:\s*\n\s*(.+?)(?:\n\n|\nSearch Query|\n[A-Z][a-z\s]+:|$)", query, re.DOTALL | re.IGNORECASE)
     if match:
         core = match.group(1).strip()
         if core:
             return core
 
     # Pattern 1: "Current Question:\n<question>"
-    match = re.search(r"Current Question:\s*\n\s*(.+?)(?:\n\n|\nClass:|\nStudent preferences:|$)", query, re.DOTALL | re.IGNORECASE)
+    match = re.search(r"Current Question:\s*\n\s*(.+?)(?:\n\n|\nClass:|\nStudent preferences:|\n[A-Z][a-z\s]+:|$)", query, re.DOTALL | re.IGNORECASE)
     if match:
         core = match.group(1).strip()
         if core:
             return core
     
     # Pattern 2: "Previous conversation:...\n\nCurrent Question:\n<question>"
-    match = re.search(r"Current Question:\s*\n\s*(.+?)(?:\n\n|\nClass:|$)", query, re.DOTALL | re.IGNORECASE)
+    match = re.search(r"Current Question:\s*\n\s*(.+?)(?:\n\n|\nClass:|\n[A-Z][a-z\s]+:|$)", query, re.DOTALL | re.IGNORECASE)
     if match:
         core = match.group(1).strip()
         if core:
@@ -74,7 +73,8 @@ def extract_core_question(query: str) -> str:
         # Avoid systemic lines in fallbacks
         systemic_prefixes = (
             'Class:', 'Subject:', 'Student', 'Rules:', 'Previous', 
-            'You are an expert', 'IMPORTANT INSTRUCTIONS', 'Target student', 'Use a friendly'
+            'You are an expert', 'IMPORTANT INSTRUCTIONS', 'Target student', 'Use a friendly',
+            'Topic:', '1.', '2.', '3.', '4.', '5.', 'CRITICAL:', 'DETECTED', 'AGENT'
         )
         
         # If first line is very short and looks like a question, use it
@@ -86,7 +86,8 @@ def extract_core_question(query: str) -> str:
         if len(query) > 500:
             for line in lines:  
                 line = line.strip()
-                if line and 10 < len(line) < 300 and not line.startswith(systemic_prefixes):
+                # Skip numeric list items and other systemic lines
+                if line and 10 < len(line) < 300 and not line.startswith(systemic_prefixes) and not re.match(r'^\d+\.', line):
                     # Check if it contains labels we might have missed
                     if "Question:" in line or "Query:" in line:
                         continue
@@ -101,7 +102,7 @@ def extract_core_question(query: str) -> str:
 VECTOR_INDEX_NAME = "vector_index"
 # In the current schema, the embedding vector is stored under `embedding.vector`
 VECTOR_PATH = "embedding.vector"
-TOP_K = 10
+TOP_K = 5
 MIN_SCORE_THRESHOLD = 0.3  # Threshold for chunk selection - balanced with content validation
 import numpy as np
 # -----------------------------

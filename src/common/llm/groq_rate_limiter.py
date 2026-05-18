@@ -1,10 +1,77 @@
 import asyncio
+import json
 import logging
+import os
 import threading
 import time
 from typing import Optional
 
 logger = logging.getLogger(__name__)
+
+# -----------------------------
+# Daily Token Budget Tracker
+# -----------------------------
+_DAILY_TOKEN_FILE = "/tmp/groq_daily_tokens.json"
+_daily_token_lock = threading.Lock()
+
+
+def _get_today_key() -> str:
+    return time.strftime("%Y-%m-%d")
+
+
+def _load_daily_tokens() -> dict:
+    try:
+        if os.path.exists(_DAILY_TOKEN_FILE):
+            with open(_DAILY_TOKEN_FILE, "r") as f:
+                data = json.load(f)
+            # Reset if date changed
+            today = _get_today_key()
+            if data.get("date") != today:
+                return {"date": today, "tokens_used": 0}
+            return data
+    except Exception as e:
+        logger.warning(f"Failed to load daily token tracker: {e}")
+    return {"date": _get_today_key(), "tokens_used": 0}
+
+
+def _save_daily_tokens(data: dict) -> None:
+    try:
+        with open(_DAILY_TOKEN_FILE, "w") as f:
+            json.dump(data, f)
+    except Exception as e:
+        logger.warning(f"Failed to save daily token tracker: {e}")
+
+
+def increment_daily_tokens(tokens: int) -> None:
+    """Increment the daily token usage counter."""
+    with _daily_token_lock:
+        data = _load_daily_tokens()
+        data["tokens_used"] = data.get("tokens_used", 0) + tokens
+        data["date"] = _get_today_key()
+        _save_daily_tokens(data)
+
+
+def get_daily_tokens_used() -> int:
+    """Return total tokens used today."""
+    with _daily_token_lock:
+        data = _load_daily_tokens()
+        return data.get("tokens_used", 0)
+
+
+def is_daily_budget_low(threshold: int = 10000) -> bool:
+    """
+    Returns True if remaining daily budget is below threshold.
+    Default Groq TPD is 500,000 tokens.
+    """
+    tpd_limit = 500000
+    used = get_daily_tokens_used()
+    remaining = tpd_limit - used
+    is_low = remaining < threshold
+    if is_low:
+        logger.warning(
+            f"Daily token budget LOW: {used}/{tpd_limit} used, {remaining} remaining"
+        )
+    return is_low
 
 
 class TokenBucketRateLimiter:

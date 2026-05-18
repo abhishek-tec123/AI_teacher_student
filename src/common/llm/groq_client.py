@@ -1,5 +1,7 @@
 import asyncio
+import inspect
 import logging
+import threading
 import time
 from typing import List, Optional, Any
 
@@ -11,12 +13,47 @@ from common.llm.groq_rate_limiter import (
     get_rate_limiter,
     get_concurrency_limiter,
     estimate_tokens,
+    increment_daily_tokens,
+    is_daily_budget_low,
 )
 
 logger = logging.getLogger(__name__)
 
 # Cached ChatGroq instances by (model_name, temperature, max_tokens, max_retries, streaming)
 _llm_cache: dict = {}
+
+# Global LLM call tracker
+_llm_call_log: list = []
+_llm_call_lock = threading.Lock()
+
+
+def _record_llm_call(model_name: str, estimated_tokens: int):
+    """Record an LLM invocation for per-request auditing."""
+    global _llm_call_log
+    caller_frame = inspect.currentframe().f_back.f_back
+    caller_file = inspect.getfile(caller_frame) if caller_frame else "unknown"
+    caller_func = caller_frame.f_code.co_name if caller_frame else "unknown"
+    # Shorten path
+    caller_file = caller_file.split("/src/")[-1] if "/src/" in caller_file else caller_file.split("\\src\\")[-1]
+    entry = {
+        "timestamp": time.time(),
+        "model": model_name,
+        "tokens": estimated_tokens,
+        "caller_file": caller_file,
+        "caller_func": caller_func,
+    }
+    with _llm_call_lock:
+        _llm_call_log.append(entry)
+        # Keep only last 500 entries
+        if len(_llm_call_log) > 500:
+            _llm_call_log = _llm_call_log[-500:]
+
+
+def get_recent_llm_calls(seconds: float = 10.0) -> list:
+    """Return LLM calls within the last N seconds."""
+    now = time.time()
+    with _llm_call_lock:
+        return [c for c in _llm_call_log if now - c["timestamp"] <= seconds]
 
 
 def _get_cached_llm(
@@ -192,13 +229,16 @@ def sync_invoke_with_limiters(
 
     # Acquire concurrency slot and make the call
     with concurrency_limiter:
-        return _invoke_llm_sync(
+        result = _invoke_llm_sync(
             llm=llm,
             messages=messages,
             retry_on_429=retry_on_429,
             retry_max_attempts=retry_max_attempts,
             retry_base_delay=retry_base_delay,
         )
+    _record_llm_call(_model_name, estimated_total)
+    increment_daily_tokens(estimated_total)
+    return result
 
 
 async def async_invoke_with_limiters(
@@ -250,10 +290,13 @@ async def async_invoke_with_limiters(
     )
 
     async with concurrency_limiter:
-        return await _invoke_llm_async(
+        result = await _invoke_llm_async(
             llm=llm,
             messages=messages,
             retry_on_429=retry_on_429,
             retry_max_attempts=retry_max_attempts,
             retry_base_delay=retry_base_delay,
         )
+    _record_llm_call(_model_name, estimated_total)
+    increment_daily_tokens(estimated_total)
+    return result

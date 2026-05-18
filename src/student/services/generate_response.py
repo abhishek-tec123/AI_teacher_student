@@ -45,16 +45,17 @@ def _cache_llm_response(cache_key: str, response):
 async def _generate_response_async(
     query: str,
     context: str = None,
-    system_prompt: str = "Provide a clear, short, and simple response."
+    system_prompt: str = "Provide a clear, short, and simple response.",
+    model_name: str = None,
 ) -> str:
     """Async version of LLM response generation."""
-    
+
     # Check cache first
     cache_key = _get_llm_cache_key(query, context or "", system_prompt)
     cached_response = _get_cached_llm_response(cache_key)
     if cached_response:
         return cached_response
-    
+
     def _generate():
         try:
             groq_api_key = settings.groq_api_key
@@ -84,19 +85,19 @@ QUESTION:
 
             response = sync_invoke_with_limiters(
                 messages=[HumanMessage(content=full_input)],
-                model_name=settings.groq_llm,
+                model_name=model_name or settings.groq_llm,
                 api_key=groq_api_key,
                 timeout=30.0,
                 max_retries=2,
                 retry_on_429=True,
             )
             result = getattr(response, "content", str(response)).strip()
-            
+
             # Cache the response
             _cache_llm_response(cache_key, result)
-            
+
             return result
-            
+
         except Exception as e:
             logger.error(f"Error in LLM generation: {e}")
             raise
@@ -116,10 +117,11 @@ QUESTION:
 async def generate_response_stream_async(
     query: str,
     context: str = None,
-    system_prompt: str = "Provide a clear, short, and simple response."
+    system_prompt: str = "Provide a clear, short, and simple response.",
+    model_name: str = None,
 ):
     """Async streaming version of LLM response generation."""
-    
+
     def _generate_stream():
         try:
             groq_api_key = settings.groq_api_key
@@ -151,7 +153,7 @@ QUESTION:
             # If true streaming is needed, use ChatGroq directly with caution
             response = sync_invoke_with_limiters(
                 messages=[HumanMessage(content=full_input)],
-                model_name=settings.groq_llm,
+                model_name=model_name or settings.groq_llm,
                 api_key=groq_api_key,
                 timeout=30.0,
                 max_retries=2,
@@ -160,11 +162,11 @@ QUESTION:
             content = getattr(response, 'content', '')
             if content:
                 yield content
-                    
+
         except Exception as e:
             logger.error(f"Error in LLM streaming: {e}")
             yield f"Error: {str(e)}"
-    
+
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(_llm_executor, _generate_stream)
 
@@ -172,7 +174,8 @@ QUESTION:
 def generate_response_with_groq(
     query: str,
     context: str | None = None,
-    system_prompt: str = "Provide a clear, short, and simple response."
+    system_prompt: str = "Provide a clear, short, and simple response.",
+    model_name: str = None,
 ) -> str:
     """
     Generates a simple response for a general query.
@@ -184,28 +187,34 @@ def generate_response_with_groq(
 
     try:
         # Try to run async version for better performance
-        loop = asyncio.get_event_loop()
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            # No event loop in this thread
+            return asyncio.run(_generate_response_async(query, context, system_prompt, model_name=model_name))
+
         if loop.is_running():
-            # If already in an event loop, use run_in_executor
+            # If already in an event loop, use a separate thread
             import concurrent.futures
             with concurrent.futures.ThreadPoolExecutor() as executor:
                 future = executor.submit(
-                    asyncio.run, 
-                    _generate_response_async(query, context, system_prompt)
+                    asyncio.run,
+                    _generate_response_async(query, context, system_prompt, model_name=model_name)
                 )
                 return future.result(timeout=30)
         else:
-            # If no event loop running, run directly
-            return asyncio.run(_generate_response_async(query, context, system_prompt))
+            # Loop exists but not running
+            return asyncio.run(_generate_response_async(query, context, system_prompt, model_name=model_name))
     except Exception as e:
         logger.error(f"Error in async wrapper: {e}")
         # Fallback to synchronous behavior
-        return _generate_sync_fallback(query, context, system_prompt)
+        return _generate_sync_fallback(query, context, system_prompt, model_name=model_name)
 
 def _generate_sync_fallback(
     query: str,
     context: str = None,
-    system_prompt: str = "Provide a clear, short, and simple response."
+    system_prompt: str = "Provide a clear, short, and simple response.",
+    model_name: str = None,
 ) -> str:
     """
     Fallback synchronous LLM generation.
@@ -238,7 +247,7 @@ QUESTION:
 
         response = sync_invoke_with_limiters(
             messages=[HumanMessage(content=full_input)],
-            model_name=settings.groq_llm,
+            model_name=model_name or settings.groq_llm,
             api_key=groq_api_key,
             retry_on_429=True,
         )

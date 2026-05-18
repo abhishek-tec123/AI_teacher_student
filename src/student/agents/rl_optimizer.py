@@ -131,15 +131,19 @@ class RLOptimizer:
         """
         prompt = """Rewrite the student query for textbook search. 
 Rules:
-1. If the query is a clear standalone topic (e.g., 'Thermodynamics', 'Photosynthesis'), preserve it as is or add only academic specificity. 
-2. Only use the provided context to disambiguate vague snippets (e.g., 'examples' -> 'examples of [last mentioned topic]'). 
-3. DO NOT carry over previous topics if the new query is a shift in subject.
-Output ONLY the rewritten query text."""
+1. If the query is a clear standalone topic (e.g., 'Thermodynamics', 'Photosynthesis'), preserve it as is.
+2. If the query is vague or refers to previous context (e.g., 'examples', 'problem 1', 'explain more', 'answer of this'), you MUST disambiguate it using the provided context (e.g., 'answer of problem 1 about photosynthesis').
+3. DO NOT carry over previous topics if the new query is a clear shift in subject (e.g., student asks about a different chapter).
+4. Output ONLY the rewritten query text. No explanations."""
         if context_text:
-            prompt += f"\nRecent Context:\n{context_text[:500]}"
+            prompt += f"\nRecent Context (Last 2 turns):\n{context_text[:2000]}"
             
         try:
-            rewritten = generate_response_with_groq(query=query, system_prompt=prompt)
+            rewritten = generate_response_with_groq(
+                query=query,
+                system_prompt=prompt,
+                model_name="llama-3.1-8b-instant",
+            )
             logger.info(f"RL Action: Rewritten query -> {rewritten}")
             return rewritten
         except Exception as e:
