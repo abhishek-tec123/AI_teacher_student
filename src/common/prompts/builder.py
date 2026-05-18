@@ -151,8 +151,33 @@ class PromptBuilder:
             parts.append(f"\nINFERRED TOPIC: {inferred_topic}")
             parts.append("If the student's query is vague, assume they are asking about this topic.")
 
+        # Extract dynamic question count requested from query (only when practice mode is active)
+        question_count = 3  # Default count if not specified
+        if is_practice:
+            import re
+            word_to_num = {
+                "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+                "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10
+            }
+            # Matches patterns like: 5 long questions, five practice questions, 4 questions, etc.
+            pattern = r"\b(\d+|" + "|".join(word_to_num.keys()) + r")\b\s*(?:practice\s+|long\s+|short\s+|open\s*ended\s+)?(?:questions?|problems?|tasks?|exercises?|sums?|mcqs?)"
+            match = re.search(pattern, current_query, re.IGNORECASE)
+            if match:
+                val_str = match.group(1).lower()
+                if val_str.isdigit():
+                    question_count = int(val_str)
+                elif val_str in word_to_num:
+                    question_count = word_to_num[val_str]
+            else:
+                # Fallback to any standalone number between 1 and 20 in the query
+                general_digit = re.search(r"\b(\d+)\b", current_query)
+                if general_digit:
+                    val = int(general_digit.group(1))
+                    if 1 <= val <= 20:
+                        question_count = val
+
         # 7. Format rules
-        parts.append(PromptRegistry.render("teacher_format_rules", is_practice=is_practice))
+        parts.append(PromptRegistry.render("teacher_format_rules", is_practice=is_practice, question_count=question_count))
 
         # 8. Length
         response_length = self.student_profile.get("response_length", "long")

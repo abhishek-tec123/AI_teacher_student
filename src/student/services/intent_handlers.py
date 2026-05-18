@@ -130,7 +130,9 @@ def handle_chat_intent(
 
     # Detect if this is a practice request
     practice_keywords = ["problem", "exercise", "practice", "solve", "test me", "task", "assignment", "activity", "sum", "example", "question"]
-    is_practice_request = any(word in payload.query.lower() for word in practice_keywords)
+    explanation_keywords = ["explain", "explanation", "walkthrough", "breakdown", "clarification", "how to", "how do i", "help me", "understand"]
+    q_lower = payload.query.lower()
+    is_practice_request = any(word in q_lower for word in practice_keywords) and not any(word in q_lower for word in explanation_keywords)
 
     chat = diagnosis_chat(
         student_agent,
